@@ -332,6 +332,16 @@ dev = [
     { name = "pytest-mock" },
     { name = "ruff" },
 ]
+docs = [
+    { name = "myst-parser" },
+    { name = "pyyaml" },
+    { name = "rospkg" },
+    { name = "sphinx" },
+    { name = "sphinx-autodoc-typehints" },
+    { name = "sphinx-rtd-theme" },
+    { name = "sphinxcontrib-mermaid" },
+    { name = "xacrodoc" },
+]
 
 [package.dev-dependencies]
 dev = [
@@ -346,16 +356,24 @@ dev = [
 requires-dist = [
     { name = "docutils", specifier = ">=0.18,!=0.21" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.18.0" },
+    { name = "myst-parser", marker = "extra == 'docs'", specifier = ">=4.0.1" },
     { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=4.0.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=9.0.0" },
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=7.0.0" },
     { name = "pytest-mock", marker = "extra == 'dev'", specifier = ">=3.15.0" },
     { name = "pyyaml", specifier = ">=6.0.3" },
+    { name = "pyyaml", marker = "extra == 'docs'", specifier = ">=6.0.3" },
     { name = "rospkg", specifier = ">=1.6.0" },
+    { name = "rospkg", marker = "extra == 'docs'", specifier = ">=1.6.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.14.0" },
+    { name = "sphinx", marker = "extra == 'docs'", specifier = ">=8.2.3" },
+    { name = "sphinx-autodoc-typehints", marker = "extra == 'docs'", specifier = ">=3.5.2" },
+    { name = "sphinx-rtd-theme", marker = "extra == 'docs'", specifier = ">=3.0.2" },
+    { name = "sphinxcontrib-mermaid", marker = "extra == 'docs'", specifier = ">=1.2.3" },
     { name = "xacrodoc", specifier = ">=1.3.0" },
+    { name = "xacrodoc", marker = "extra == 'docs'", specifier = ">=1.3.0" },
 ]
-provides-extras = ["dev"]
+provides-extras = ["dev", "docs"]
 
 [package.metadata.requires-dev]
 dev = [
