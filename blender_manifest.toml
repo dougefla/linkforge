@@ -13,7 +13,7 @@ version = "1.0.0"
 name = "LinkForge"
 
 # Short description (tagline) - max ~100 characters
-tagline = "Professional URDF/XACRO exporter for robotics simulation and control"
+tagline = "Professional URDF & XACRO exporter for robotics"
 
 # Extension type
 type = "add-on"
@@ -41,7 +41,6 @@ website = "https://github.com/arounamounchili/linkforge"
 # Tags for categorization on extensions.blender.org
 tags = [
     "Import-Export",
-    "Robotics",
     "Animation",
     "Modeling",
 ]
