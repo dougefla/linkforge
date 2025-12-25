@@ -181,7 +181,7 @@ LinkForge uses a "Self-Contained" bundling strategy for wheels. To update or add
 ## 📚 Documentation
 
 - **[Read the Docs](https://linkforge.readthedocs.io/)** - Complete documentation
-- **[Architecture Guide](explanation/ARCHITECTURE)** - System design with diagrams
+- **[Architecture Guide](https://github.com/arounamounchili/linkforge/blob/main/docs/source/explanation/ARCHITECTURE.md)** - System design with diagrams
 - **[API Reference](https://linkforge.readthedocs.io/en/latest/reference/api/)** - Programmatic usage
 - **[Getting Started](https://linkforge.readthedocs.io/en/latest/tutorials/index.html)** - User guide
 - **[CHANGELOG](CHANGELOG.md)** - Version history
