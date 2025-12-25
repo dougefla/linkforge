@@ -45,9 +45,7 @@ tags = [
     "Modeling",
 ]
 
-# Python wheels (dependencies) - Pure Python wheels only
-# Platform-specific dependencies (like pyyaml) are installed by Blender automatically
-# Only bundle pure Python wheels here
+# Python wheels (dependencies)
 # BEGIN AUTOMATED WHEELS
 wheels = [
     "./wheels/PyYAML-6.0.1-cp310-cp310-macosx_11_0_arm64.whl",
@@ -62,13 +60,7 @@ wheels = [
 ]
 # END AUTOMATED WHEELS
 
-# Supported platforms (omit for all platforms)
-# Options: "windows-x64", "windows-arm64", "macos-x64", "macos-arm64", "linux-x64"
-# platforms = ["windows-x64", "macos-arm64", "linux-x64"]
-
 # Permissions required by the extension
 # https://docs.blender.org/manual/en/latest/advanced/extensions/addons.html#permissions
 [permissions]
 files = "Import/Export URDF/XACRO files"  # File system access for export
-# network = "Required for..."  # Uncomment if network access needed
-# clipboard = "Required for..."  # Uncomment if clipboard access needed
