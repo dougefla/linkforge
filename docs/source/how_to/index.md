@@ -8,4 +8,5 @@ How-to guides are **task-oriented**. They provide specific "recipes" to help you
 add_sensors
 transmissions
 joint_viz
+troubleshooting
 ```

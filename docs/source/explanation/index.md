@@ -7,4 +7,5 @@ Explanation is **understanding-oriented**. It provides background, context, and 
 
 ARCHITECTURE
 data_model
+faq
 ```

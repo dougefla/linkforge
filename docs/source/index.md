@@ -4,6 +4,17 @@ Welcome to the official LinkForge documentation. LinkForge is a professional Ble
 
 Following the **Diátaxis framework**, our documentation is organized into four sections to help you find exactly what you need.
 
+## 🔄 Workflow at a Glance
+
+```mermaid
+graph LR
+    A[3D Modeling in Blender] --> B[LinkForge: Setup Robot]
+    B --> C{Validation}
+    C -- Errors --> B
+    C -- Success --> D[Export URDF/XACRO]
+    D --> E[ROS 2 / Gazebo Simulation]
+```
+
 ---
 
 ::::{grid} 2

@@ -8,6 +8,17 @@ In this tutorial, you will learn how to build a fully functional differential dr
 - How to add a **Lidar Sensor**.
 - How to **Validate** and **Export** your robot.
 
+## 🌳 Kinematic Tree
+
+Before we start building, here is the structure of the robot we are going to create:
+
+```mermaid
+graph TD
+    base_link[base_link] -->|continuous| left_wheel[left_wheel]
+    base_link -->|continuous| right_wheel[right_wheel]
+    base_link -->|fixed| lidar_link[lidar_link]
+```
+
 ---
 
 ## Step 1: Create the Base Link
@@ -20,6 +31,11 @@ In this tutorial, you will learn how to build a fully functional differential dr
    - Name it `base_link`.
    - Set **Mass** to `5.0` kg.
    - Click **Calculate Inertia** (LinkForge will automatically generate the inertia tensor for the box).
+
+::: {admonition} Tip
+:class: tip
+Always use LinkForge's **Calculate Inertia** button rather than entering values manually. It ensures the physical consistency required by simulation engines like Gazebo.
+:::
 
 ## Step 2: Create the Wheels
 
@@ -58,6 +74,11 @@ In this tutorial, you will learn how to build a fully functional differential dr
 
 1. **Validate**: In the LinkForge **Robot** tab, click **Validate Robot**.
    - LinkForge will check if all links are connected and if physics data is valid.
+
+::: {admonition} Warning
+:class: warning
+Exporting without validation may result in a URDF that causes simulators to crash or behave erratically. Fix all red markers before proceeding.
+:::
 2. **Export**: 
    - Go to the **Export** tab.
    - Select **Format**: `URDF`.

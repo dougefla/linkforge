@@ -26,3 +26,8 @@ Once added, you can configure the sensor properties:
 
 ## 4. Gazebo Integration
 LinkForge automatically generates the necessary `<gazebo>` tags and plugins to make these sensors work instantly in **Gazebo Sim** or **Gazebo Classic**.
+
+::: {admonition} Note
+:class: note
+Sensor origins in LinkForge are relative to the link they are attached to. Ensure your visual mesh in Blender aligns with where you want the "data origin" to be.
+:::
