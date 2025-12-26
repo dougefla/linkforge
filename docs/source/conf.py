@@ -24,8 +24,6 @@ extensions = [
     "sphinx.ext.napoleon",
     "sphinx.ext.viewcode",
     "sphinx.ext.intersphinx",
-    "sphinx.ext.todo",
-    "sphinx.ext.coverage",
     "sphinx_autodoc_typehints",
     "myst_parser",
     "sphinx_design",
@@ -135,5 +133,3 @@ myst_fence_as_directive = ["mermaid"]
 # Mock imports for Blender-specific modules
 autodoc_mock_imports = ["bpy", "bpy_extras", "mathutils", "gpu", "gpu_extras"]
 
-# TODO extension
-todo_include_todos = True
