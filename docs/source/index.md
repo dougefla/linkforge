@@ -43,7 +43,8 @@ LinkForge removes the friction from robotics modeling:
 1.  **Create Links**: Select a mesh and click **Create Link** in the LinkForge panel.
 2.  **Connect Joints**: Select child link and click **Create Joint**.
 3.  **Add Sensors**: Attach cameras or LiDARs to your links.
-4.  **Validate & Export**: Run the validator and export to URDF or XACRO.
+4.  **Configure Control**: Add transmissions to your joints for motor actuation.
+5.  **Validate & Export**: Run the validator and export to URDF or XACRO.
 
 ---
 

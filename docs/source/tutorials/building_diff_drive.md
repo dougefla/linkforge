@@ -6,6 +6,7 @@ In this tutorial, you will learn how to build a fully functional differential dr
 - How to create and configure **Links**.
 - How to connect links with **Joints**.
 - How to add a **Lidar Sensor**.
+- How to configure **Transmissions**.
 - How to **Validate** and **Export** your robot.
 
 ## 🌳 Kinematic Tree
@@ -32,7 +33,7 @@ graph TD
    - Set **Mass** to `5.0` kg.
    - Enable **Auto-Calculate Inertia** (LinkForge will automatically generate the inertia tensor for the box).
 
-![Creating the Base Link](../_static/screenshots/tutorial_01_create_link.png)
+![Creating the Base Link](../_static/screenshots/diff_drive_01_links.png)
 
 ::: {admonition} Tip
 :class: tip
@@ -67,7 +68,7 @@ Always keep LinkForge's **Auto-Calculate Inertia** checkbox enabled rather than 
    - **Parent**: Select `base_link`.
    - **Axis**: Set to `(0, 1, 0)` if your wheel rotates around the Y-axis.
 
-![Connecting the Wheels](../_static/screenshots/tutorial_02_joint_setup.png)
+![Connecting the Wheels](../_static/screenshots/diff_drive_02_joints.png)
 
 2. **Connect Right Wheel**:
    - Repeat the process for `right_wheel`, connecting it to `base_link`.
@@ -83,12 +84,28 @@ Always keep LinkForge's **Auto-Calculate Inertia** checkbox enabled rather than 
    - Select **Type**: `LIDAR` (LinkForge exports this as `gpu_lidar` for modern Gazebo).
    - Set **Update Rate** to `30` Hz.
 
-![Attaching the Lidar](../_static/screenshots/tutorial_03_final_robot.png)
 
-## Step 5: Validate and Export
+
+## Step 5: Configure Control
+
+To make our robot actuable in ROS 2 or Gazebo, we need to add transmissions to the joints we want to control (the wheels).
+
+1. **Select Left Wheel Joint**: 
+   - Note: In LinkForge, transmissions are attached to joints.
+   - Select the `left_wheel_joint` (the Empty object representing the joint).
+2. **Add Transmission**:
+   - Go to the **Control** tab in the LinkForge panel.
+   - Click **Create Transmission**.
+3. **Configure Interface**:
+   - Set **Hardware Interface** to `Velocity` (standard for mobile robot wheels).
+4. **Repeat for Right Wheel**: Connect a `Velocity` interface to the `right_wheel_joint`.
+
+![Configuring Transmissions](../_static/screenshots/diff_drive_05_control.png)
+
+## Step 6: Validate and Export
 
 1. **Validate**: In the LinkForge **Robot** tab, click **Validate Robot**.
-   - LinkForge will check if all links are connected and if physics data is valid.
+   - LinkForge will check if all links are connected, if physics data is valid, and if transmissions are correctly set up.
 
 ::: {admonition} Warning
 :class: warning
@@ -102,4 +119,6 @@ Exporting without validation may result in a URDF that causes simulators to cras
 ---
 
 ### 🎉 Success!
-You now have a production-ready URDF file. You can now load this file into **Gazebo** or use it with a **ROS 2** robot state publisher.
+![Final Robot](../_static/screenshots/diff_drive_06_final.png)
+
+You now have a production-ready, actuable URDF file. You can now load this file into **Gazebo** or use it with **ROS 2** and the `diff_drive_controller` to drive your robot!

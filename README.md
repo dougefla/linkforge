@@ -68,7 +68,11 @@ LinkForge removes that friction. Model your robot in Blender as naturally as scu
    - Select a link → **Add Sensor**
    - Configure sensor type, update rate, and noise parameters
 
-4. **Validate & Export**
+4. **Configure Control** (Optional)
+   - Select a joint → **Create Transmission**
+   - Configure hardware interfaces (Position, Velocity, or Effort)
+
+5. **Validate & Export**
    - Click **Validate Robot** to check for errors
    - Choose format (URDF/XACRO)
    - Click **Export** → Done!
