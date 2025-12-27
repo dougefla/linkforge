@@ -23,7 +23,7 @@ If a Link has multiple visual meshes (e.g., a chassis made of several separate p
 
 ## 4. Live Preview & Quality
 - **Collision Quality**: Use the slider to decimate the generated convex hull. Lower quality means fewer vertices and faster simulation.
-- **Toggling Visibility**: Collisions are hidden by default to keep the viewport clean. Click the **Eye icon** next to "Generate Collision" or use the **Toggle Collision Visibility** button in the Robot tab to inspect your collision meshes.
+- **Toggling Visibility**: Collisions are hidden by default to keep the viewport clean. Click the **Eye icon** next to "Generate Collision" or use the **Toggle Collision Visibility** button in the **Validate & Export** tab to inspect your collision meshes.
 
 ## 5. Manual Collisions
 If you want to provide your own hand-optimized collision mesh:

@@ -105,7 +105,7 @@ To make our robot actuable in ROS 2 or Gazebo, we need to add transmissions to t
 
 ## Step 6: Validate and Export
 
-1. **Validate**: In the LinkForge **Robot** tab, click **Validate Robot**.
+1. **Validate**: In the LinkForge **Validate & Export** tab, click **Validate Robot**.
    - LinkForge will check if all links are connected, if physics data is valid, if collision geometry exists, and if transmissions are correctly set up.
 
 ::: {admonition} Warning
@@ -113,7 +113,7 @@ To make our robot actuable in ROS 2 or Gazebo, we need to add transmissions to t
 Exporting without validation may result in a URDF that causes simulators to crash or behave erratically. Fix all red markers before proceeding.
 :::
 2. **Export**: 
-   - Go to the **Export** tab.
+   - Go to the **Validate & Export** tab.
    - Select **Format**: `URDF`.
    - Click **Export URDF** and choose a location.
 

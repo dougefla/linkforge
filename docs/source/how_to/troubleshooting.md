@@ -42,7 +42,7 @@ This guide provides solutions to common issues encountered when building, valida
 **Symptoms**: The robot appears invisible or has broken geometry in Gazebo.
 **Solution**:
 - LinkForge uses repository-relative paths (e.g., `package://robot_description/meshes/`). 
-- Ensure your `package.xml` and folder structure match the export path settings in the Export tab.
+- Ensure your `package.xml` and folder structure match the export path settings in the **Validate & Export** tab.
 
 ### "No Root Link Found" Error
 **Symptoms**: Validation fails with a root link error.
