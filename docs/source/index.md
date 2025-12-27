@@ -133,7 +133,6 @@ reference/index
 
 CHANGELOG
 CONTRIBUTING
-README
 LICENSE
 ```
 
