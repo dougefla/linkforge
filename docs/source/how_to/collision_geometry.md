@@ -23,10 +23,11 @@ If a Link has multiple visual meshes (e.g., a chassis made of several separate p
 
 ## 4. Live Preview & Quality
 - **Collision Quality**: Use the slider to decimate the generated convex hull. Lower quality means fewer vertices and faster simulation.
-- **Toggling Visibility**: Collisions are hidden by default to keep the viewport clean. Click the **Eye icon** next to "Generate Collision" or use the **Toggle Collision Visibility** button in the **Validate & Export** tab to inspect your collision meshes.
+- **Toggling Visibility**: Collisions are hidden by default to keep the viewport clean. Click the **Show/Hide Collision** button in the **Link** tab or use the **Show Collisions** toggle (with the wireframe icon) in the **Validate & Export** tab to inspect your collision meshes.
 
 ## 5. Manual Collisions
 If you want to provide your own hand-optimized collision mesh:
-1. Add a mesh child to your Link.
-2. Ensure the name ends with the `_collision` suffix (e.g., `chassis_collision`).
-3. LinkForge will detect this and use it instead of generating one.
+1. Create or select a mesh to use as your collision.
+2. **Parent the mesh** to your Link object (it must appear as a child in the Blender Outliner).
+3. Ensure the mesh name ends with the `_collision` suffix (e.g., `chassis_collision`).
+4. LinkForge will automatically detect this and use it instead of generating one.
