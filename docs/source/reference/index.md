@@ -6,6 +6,7 @@ Reference is **information-oriented**. It provides technical descriptions, speci
 :maxdepth: 2
 
 api/index
+robot_structure
 glossary
 ```
 

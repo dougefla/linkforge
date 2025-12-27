@@ -1,16 +1,33 @@
 # Explanation: The LinkForge Data Model
 
-To understand how LinkForge converts a Blender scene into a URDF, it's important to understand the underlying data model.
+To understand how LinkForge converts a Blender scene into a URDF, it's important to understand the philosophy behind its data model. 
 
-## Why not just use Blender groups?
-Standard Blender parent-child relationships don't store enough information for robotics simulation (like joint types, axis orientations, or mass properties).
+## The Semantic Bridge
 
-## The Three Layers
-LinkForge maintains a parallel data structure that maps Blender objects to URDF elements:
+LinkForge acts as a **semantic bridge**. In Blender, you are manipulating geometry and lights; in a URDF, you are defining a kinematic tree of physical bodies and constraints.
 
-1. **Blender Object Layer**: The visual mesh and collision geometry you see in the viewport.
-2. **LinkForge Property Layer**: Hidden custom properties attached to Blender objects that store mass, inertia, and joint settings.
-3. **Core URDF Model**: An immutable Python object created only during validation/export that ensures the robot tree is mathematically sound.
+LinkForge decouples these two worlds by using **Empty Objects** as the primary "anchors" for robot components.
 
-## Coordinate Frames
-Blender uses a **Right-Handed Z-Up** coordinate system. LinkForge ensures that when you export to URDF (which is also Right-Handed), all offsets and rotations are correctly converted so your robot "stands up" correctly in Gazebo.
+### 1. Why use Empties for Links and Joints?
+Standard Blender meshes are designed for rendering. They have scale, rotation, and potentially complex modifiers. If we attached URDF data directly to a mesh, changing the visual representation (e.g., swapping a high-poly wheel for a low-poly wheel) would risk losing the physics data.
+
+By using an **Empty** as the "Link Frame":
+- **Independence**: You can swap, scale, or move the visual meshes without affecting the Joint origin or the Inertia frame.
+- **Precision**: Empties have no geometry by themselves, ensuring they represent a mathematically pure coordinate frame.
+- **Visual Clarity**: Joints are represented by arrows, making it easy to see the axis of rotation at a glance.
+
+### 2. Composition over Parenting
+In a standard Blender hierarchy, you might parent a wheel mesh to a car body mesh. In LinkForge, we use a more structured approach:
+- **Link (Empty)**: The root container for a physical body.
+- **Visual/Collision (Meshes)**: Children of the Link Empty.
+- **Joint (Empty)**: A floating coordinate frame that defines how one Link connects to another.
+
+This structure allows for **non-destructive editing**. You can hide all collision meshes to work on aesthetics, or hide visuals to inspect the physics layout, all without breaking the kinematic tree.
+
+### 3. Automatic Physics
+LinkForge bridges the gap between Blender's visual bounding boxes and URDF's inertia tensors. Because it understands the Link Frame separately from the meshes, it can automatically sum up the masses of all visual children and calculate a consistent inertia tensor, even for complex arbitrary shapes.
+
+---
+
+> [!TIP]
+> For a technical breakdown of naming conventions and object types, see the [Robot Structure Reference](../reference/robot_structure.md).

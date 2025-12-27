@@ -32,6 +32,7 @@ graph TD
    - Name it `base_link`.
    - Set **Mass** to `5.0` kg.
    - Enable **Auto-Calculate Inertia** (LinkForge will automatically generate the inertia tensor for the box).
+   - **Generate Collision**: Click **Generate Collision**. LinkForge will create an optimized bounding box for the cube.
 
 ![Creating the Base Link](../_static/screenshots/diff_drive_01_links.png)
 
@@ -52,12 +53,14 @@ Always keep LinkForge's **Auto-Calculate Inertia** checkbox enabled rather than 
 2. Click **Create Link**.
 3. Name it `left_wheel`.
 4. Set **Mass** to `0.5` kg.
+5. **Generate Collision**: Click **Generate Collision**.
 
 ### Forge the Right Wheel
 1. Select the second cylinder.
 2. Click **Create Link**.
 3. Name it `right_wheel`.
 4. Set **Mass** to `0.5` kg.
+5. **Generate Collision**: Click **Generate Collision**.
 
 ## Step 3: Connect with Joints
 
@@ -84,8 +87,6 @@ Always keep LinkForge's **Auto-Calculate Inertia** checkbox enabled rather than 
    - Select **Type**: `LIDAR` (LinkForge exports this as `gpu_lidar` for modern Gazebo).
    - Set **Update Rate** to `30` Hz.
 
-
-
 ## Step 5: Configure Control
 
 To make our robot actuable in ROS 2 or Gazebo, we need to add transmissions to the joints we want to control (the wheels).
@@ -105,7 +106,7 @@ To make our robot actuable in ROS 2 or Gazebo, we need to add transmissions to t
 ## Step 6: Validate and Export
 
 1. **Validate**: In the LinkForge **Robot** tab, click **Validate Robot**.
-   - LinkForge will check if all links are connected, if physics data is valid, and if transmissions are correctly set up.
+   - LinkForge will check if all links are connected, if physics data is valid, if collision geometry exists, and if transmissions are correctly set up.
 
 ::: {admonition} Warning
 :class: warning
@@ -119,6 +120,165 @@ Exporting without validation may result in a URDF that causes simulators to cras
 ---
 
 ### 🎉 Success!
+
 ![Final Robot](../_static/screenshots/diff_drive_06_final.png)
 
 You now have a production-ready, actuable URDF file. You can now load this file into **Gazebo** or use it with **ROS 2** and the `diff_drive_controller` to drive your robot!
+
+---
+
+### 📄 Sample URDF Output
+
+If you followed the steps correctly, your exported URDF should look similar to the following. You can use this as a reference to verify your names, origins, and transmission configurations.
+
+```{dropdown} Click to view diff_drive_robot.urdf
+```xml
+<robot name="diff_drive_robot">
+  <!-- Links -->
+  <link name="base_link">
+    <visual>
+      <geometry>
+        <box size="0.4 0.3 0.1" />
+      </geometry>
+    </visual>
+    <collision>
+      <geometry>
+        <box size="0.4 0.3 0.1" />
+      </geometry>
+    </collision>
+    <inertial>
+      <mass value="5" />
+      <inertia ixx="0.041667" ixy="0" ixz="0" iyy="0.070833" iyz="0" izz="0.104167" />
+    </inertial>
+  </link>
+  <link name="left_wheel">
+    <visual>
+      <geometry>
+        <cylinder radius="0.1" length="0.05" />
+      </geometry>
+    </visual>
+    <collision>
+      <geometry>
+        <cylinder radius="0.1" length="0.05" />
+      </geometry>
+    </collision>
+    <inertial>
+      <mass value="0.5" />
+      <inertia ixx="0.001354" ixy="0" ixz="0" iyy="0.001354" iyz="0" izz="0.0025" />
+    </inertial>
+  </link>
+  <link name="right_wheel">
+    <visual>
+      <geometry>
+        <cylinder radius="0.1" length="0.05" />
+      </geometry>
+    </visual>
+    <collision>
+      <geometry>
+        <cylinder radius="0.1" length="0.05" />
+      </geometry>
+    </collision>
+    <inertial>
+      <mass value="0.5" />
+      <inertia ixx="0.001354" ixy="0" ixz="0" iyy="0.001354" iyz="0" izz="0.0025" />
+    </inertial>
+  </link>
+  <link name="lidar_link">
+    <visual>
+      <geometry>
+        <cylinder radius="0.03174" length="0.037866" />
+      </geometry>
+    </visual>
+    <inertial>
+      <mass value="1" />
+      <inertia ixx="0.000371" ixy="0" ixz="0" iyy="0.000371" iyz="0" izz="0.000504" />
+    </inertial>
+  </link>
+  <!-- Joints -->
+  <joint name="left_wheel_joint" type="continuous">
+    <origin xyz="0 0.175 0" rpy="1.570796 0 0" />
+    <parent link="base_link" />
+    <child link="left_wheel" />
+    <axis xyz="0 1 0" />
+    <limit effort="10" velocity="1" />
+  </joint>
+  <joint name="right_wheel_joint" type="continuous">
+    <origin xyz="0 -0.175 0" rpy="1.570796 0 0" />
+    <parent link="base_link" />
+    <child link="right_wheel" />
+    <axis xyz="0 1 0" />
+    <limit effort="10" velocity="1" />
+  </joint>
+  <joint name="lidar_link_joint" type="fixed">
+    <origin xyz="0 0 0.064282" rpy="0 0 0" />
+    <parent link="base_link" />
+    <child link="lidar_link" />
+  </joint>
+  <!-- Transmissions -->
+  <transmission name="right_wheel_transmission">
+    <type>transmission_interface/SimpleTransmission</type>
+    <joint name="right_wheel_joint">
+      <hardwareInterface>velocity</hardwareInterface>
+    </joint>
+    <actuator name="right_wheel_joint_motor">
+      <hardwareInterface>velocity</hardwareInterface>
+      <mechanicalReduction>1</mechanicalReduction>
+    </actuator>
+  </transmission>
+  <transmission name="left_wheel_transmission">
+    <type>transmission_interface/SimpleTransmission</type>
+    <joint name="left_wheel_joint">
+      <hardwareInterface>velocity</hardwareInterface>
+    </joint>
+    <actuator name="left_wheel_joint_motor">
+      <hardwareInterface>velocity</hardwareInterface>
+      <mechanicalReduction>1</mechanicalReduction>
+    </actuator>
+  </transmission>
+  <!-- ROS2 Control -->
+  <ros2_control name="GazeboSimSystem" type="system">
+    <hardware>
+      <plugin>gz_ros2_control/GazeboSimSystem</plugin>
+    </hardware>
+    <joint name="right_wheel_joint">
+      <command_interface name="velocity" />
+      <state_interface name="position" />
+      <state_interface name="velocity" />
+    </joint>
+    <joint name="left_wheel_joint">
+      <command_interface name="velocity" />
+      <state_interface name="position" />
+      <state_interface name="velocity" />
+    </joint>
+  </ros2_control>
+  <gazebo>
+    <plugin filename="libgz_ros2_control-system.so" name="gz_ros2_control::GazeboSimROS2ControlPlugin">
+      <parameters>$(find robot_description)/config/controllers.yaml</parameters>
+    </plugin>
+  </gazebo>
+  <!-- Sensors -->
+  <gazebo reference="lidar_link">
+    <sensor name="lidar_link_sensor" type="gpu_lidar">
+      <always_on>true</always_on>
+      <update_rate>30</update_rate>
+      <visualize>false</visualize>
+      <ray>
+        <scan>
+          <horizontal>
+            <samples>640</samples>
+            <resolution>1</resolution>
+            <min_angle>-1.570796</min_angle>
+            <max_angle>1.570796</max_angle>
+          </horizontal>
+        </scan>
+        <range>
+          <min>0.1</min>
+          <max>10</max>
+          <resolution>0.01</resolution>
+        </range>
+      </ray>
+    </sensor>
+  </gazebo>
+</robot>
+```
+```
