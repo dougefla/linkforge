@@ -13,8 +13,6 @@ A sensor in URDF is usually attached to a specific link. You can either attach i
 2. Open the **LinkForge** panel and navigate to the **Perceive** tab.
 3. Click **Add Sensor**.
 
-![Sensor Panel](../_static/screenshots/sensor_01_panel.png)
-
 ## 3. Configuration
 Once added, you can configure the sensor properties:
 - **Update Rate**: How many times per second the sensor scans (e.g., 30Hz).
