@@ -27,7 +27,7 @@ graph TD
 1. **Add a Mesh**: In Blender, press `Shift + A` and select **Mesh > Cube**. 
 2. **Scale the Base**: Set the dimensions to roughly `0.4m x 0.3m x 0.1m`.
 3. **Forge the Link**:
-   - Open the **LinkForge** panel in the Sidebar (`N` key).
+   - Open the **Links** panel in the LinkForge sidebar (`N` key).
    - With the cube selected, click **Create Link**.
    - Name it `base_link`.
    - Set **Mass** to `5.0` kg.
@@ -66,7 +66,7 @@ Always keep LinkForge's **Auto-Calculate Inertia** checkbox enabled rather than 
 
 1. **Connect Left Wheel**:
    - Select `left_wheel`.
-   - In the LinkForge panel, go to the **Joints** tab and click **Create Joint**.
+   - In the LinkForge sidebar, go to the **Joints** panel and click **Create Joint**.
    - **Type**: Select `continuous` (wheels don't have limits).
    - **Parent**: Select `base_link`.
    - **Axis**: Set to `(0, 1, 0)` if your wheel rotates around the Y-axis.
@@ -82,7 +82,7 @@ Always keep LinkForge's **Auto-Calculate Inertia** checkbox enabled rather than 
 2. **Create Link**: Call it `lidar_link`.
 3. **Create Fixed Joint**: Connect `lidar_link` to `base_link` using a `fixed` joint type.
 4. **Attach Sensor**:
-   - Go to the **Perceive** tab in LinkForge (often referred to as the Sensors panel).
+   - Go to the **Perceive** panel in the LinkForge sidebar.
    - With `lidar_link` selected, click **Add Sensor**.
    - Select **Type**: `LIDAR` (LinkForge exports this as `gpu_lidar` for modern Gazebo).
    - Set **Update Rate** to `30` Hz.
@@ -95,7 +95,7 @@ To make our robot actuable in ROS 2 or Gazebo, we need to add transmissions to t
    - Note: In LinkForge, transmissions are attached to joints.
    - Select the `left_wheel_joint` (the Empty object representing the joint).
 2. **Add Transmission**:
-   - Go to the **Control** tab in the LinkForge panel.
+   - Go to the **Control** panel in the LinkForge sidebar.
    - Click **Create Transmission**.
 3. **Configure Interface**:
    - Set **Hardware Interface** to `Velocity` (standard for mobile robot wheels).
@@ -105,7 +105,7 @@ To make our robot actuable in ROS 2 or Gazebo, we need to add transmissions to t
 
 ## Step 6: Validate and Export
 
-1. **Validate**: In the LinkForge **Validate & Export** tab, click **Validate Robot**.
+1. **Validate**: In the **Validate & Export** panel, click **Validate Robot**.
    - LinkForge will check if all links are connected, if physics data is valid, if collision geometry exists, and if transmissions are correctly set up.
 
 ::: {admonition} Warning
@@ -113,7 +113,7 @@ To make our robot actuable in ROS 2 or Gazebo, we need to add transmissions to t
 Exporting without validation may result in a URDF that causes simulators to crash or behave erratically. Fix all red markers before proceeding.
 :::
 2. **Export**: 
-   - Go to the **Validate & Export** tab.
+   - Go to the **Validate & Export** panel.
    - Select **Format**: `URDF`.
    - Click **Export URDF** and choose a location.
 

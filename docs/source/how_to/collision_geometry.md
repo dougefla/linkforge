@@ -9,7 +9,7 @@ While your **Visual** meshes can be high-poly and complex for aesthetics, **Coll
 LinkForge makes it easy to generate optimized collision geometry from your visuals:
 
 1. Select a **Link** (the Empty object) or any of its children.
-2. Go to the **Link** tab in the LinkForge panel.
+2. Go to the **Links** panel in the LinkForge sidebar.
 3. Click **Generate Collision**.
 
 ### Collision Types
@@ -23,7 +23,7 @@ If a Link has multiple visual meshes (e.g., a chassis made of several separate p
 
 ## 4. Live Preview & Quality
 - **Collision Quality**: Use the slider to decimate the generated convex hull. Lower quality means fewer vertices and faster simulation.
-- **Toggling Visibility**: Collisions are hidden by default to keep the viewport clean. Click the **Show/Hide Collision** button in the **Link** tab or use the **Show Collisions** toggle (with the wireframe icon) in the **Validate & Export** tab to inspect your collision meshes.
+- **Toggling Visibility**: Collisions are hidden by default to keep the viewport clean. Click the **Show/Hide Collision** button in the **Links** panel or use the **Show Collisions** toggle (with the wireframe icon) in the **Validate & Export** panel to inspect your collision meshes.
 
 ## 5. Manual Collisions
 If you want to provide your own hand-optimized collision mesh:

@@ -4,13 +4,13 @@ This guide explains how to set up transmissions and `ros2_control` interfaces fo
 
 ## 1. Enable Control
 To export valid ROS 2 control tags, you must enable the feature. This can be done at any time before export:
-1. Go to the **Validate & Export** tab in the LinkForge panel.
+1. Go to the **Validate & Export** panel in the LinkForge sidebar.
 2. Check **Generate ROS2 Control**.
 3. **Hardware System**: This is automatically set to `GazeboSimSystem` (standard for Gazebo Sim). You usually don't need to change this unless you are writing a custom hardware interface.
 
 ## 2. Add a Transmission
 1. Select the **Joint** you want to actuate (either in the viewport or via the Outliner).
-2. Go to the **Control** tab in LinkForge.
+2. Go to the **Control** panel in the LinkForge sidebar.
 3. Click **Add Transmission**.
 
 ## 3. Configure Hardware Interfaces
