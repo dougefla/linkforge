@@ -455,7 +455,7 @@ subprocess.run(["pytest", "tests/integration/"])
 
 ## Getting Help
 
-- **Documentation**: Check [ARCHITECTURE](https://linkforge.readthedocs.io/en/latest/explanation/ARCHITECTURE.html) and [README.md](README.md)
+- **Documentation**: Check the [Official Documentation](https://linkforge.readthedocs.io/) and [Architecture Guide](https://linkforge.readthedocs.io/en/latest/explanation/ARCHITECTURE.html)
 - **Issues**: Search [existing issues](https://github.com/arounamounchili/linkforge/issues)
 - **Discussions**: Ask in [GitHub Discussions](https://github.com/arounamounchili/linkforge/discussions)
 
