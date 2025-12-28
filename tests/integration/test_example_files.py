@@ -38,7 +38,7 @@ def test_diff_drive_robot_structure():
     assert len(robot.links) == 4
     assert len(robot.joints) == 3
     assert len(robot.transmissions) == 2
-    assert len(robot.sensors) == 0
+    assert len(robot.sensors) == 1
     assert len(robot.gazebo_elements) == 1
 
     # Check root link
