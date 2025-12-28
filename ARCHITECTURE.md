@@ -4,7 +4,7 @@ This document provides a comprehensive overview of LinkForge's architecture, mod
 
 ## System Overview
 
-LinkForge is a Blender extension that bridges the gap between 3D modeling and robotics simulation. It consists of three main layers:
+LinkForge is a Blender extension that bridges the gap between 3D modeling and robotics simulation. Its internal architecture is organized into **two primary layers**, which together interface with the broader robotics ecosystem:
 
 ```mermaid
 graph TB
@@ -92,10 +92,10 @@ graph LR
 
 | Module | Purpose | Key Files |
 |--------|---------|-----------|
-| **Panels** | UI layout and display | `robot_panel.py`, `joint_panel.py`, `link_panel.py` |
-| **Operators** | User actions (create, export, etc.) | `export_ops.py`, `link_ops.py`, `joint_ops.py` |
-| **Properties** | Blender scene data storage | `robot_props.py`, `joint_props.py`, `link_props.py` |
-| **Utils** | Conversion between Blender ↔ Core | `converters.py`, `urdf_importer.py`, `mesh_export.py` |
+| **Panels** | UI layout and display | `robot_panel.py`, `joint_panel.py`, `link_panel.py`, `sensor_panel.py`, `transmission_panel.py` |
+| **Operators** | User actions (create, export, etc.) | `export_ops.py`, `link_ops.py`, `joint_ops.py`, `sensor_ops.py`, `transmission_ops.py` |
+| **Properties** | Blender scene data storage | `robot_props.py`, `joint_props.py`, `link_props.py`, `sensor_props.py`, `transmission_props.py` |
+| **Utils** | Conversion between Blender ↔ Core | `converters.py`, `urdf_importer.py`, `mesh_export.py`, `joint_gizmos.py` |
 | **Handlers** | Event listeners (file load, etc.) | `handlers.py` |
 
 ### 2. Core Logic Layer (`linkforge/core/`)
@@ -377,8 +377,8 @@ class Robot:
 ```mermaid
 graph TB
     subgraph "Test Pyramid"
-        Integration[Integration Tests<br/>17 tests<br/>Full workflows]
-        Core[Core Tests<br/>453 tests<br/>Unit + Round-trip]
+        Integration[Integration Tests<br/>Full workflows]
+        Core[Core Tests<br/>Unit + Round-trip]
     end
 
     Integration --> Core
@@ -412,21 +412,13 @@ graph TB
    - Max XML depth: 100 levels
    - Max numeric value: ±1e10
 
-## Future Architecture Considerations
 
-### Planned Enhancements
-- [ ] Plugin system for custom exporters
-- [ ] Undo/redo support for operations
-- [ ] Multi-robot scene support
-- [ ] Real-time validation feedback
-- [ ] Cloud-based robot library
-
-### Scalability
-- Current design supports robots up to ~1000 links
+## Scalability
+- **Complex Robots**: Supports multi-link chains, branched trees, and multi-sensor configurations.
 - Parser handles files up to 100 MB
 - Blender integration tested with complex quadrupeds
 
 ---
 
-**Last Updated:** 2025-12-23
+**Last Updated:** 2025-12-27
 **Version:** 1.0.0
