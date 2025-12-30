@@ -327,11 +327,11 @@ Pre-commit automatically runs on `git commit`:
    - Link any related issues
 
 3. **PR Checklist**
+   - [ ] PR title follows **Conventional Commits** (e.g. `feat: ...`, `fix: ...`)
    - [ ] Tests pass (`uv run pytest`)
    - [ ] Linting passes (`uv run ruff check linkforge/`)
    - [ ] Code is formatted (`uv run ruff format linkforge/`)
    - [ ] Documentation updated (if needed)
-   - [ ] CHANGELOG.md updated (for significant changes)
    - [ ] Extension builds (`python3 build_extension.py`)
 
 4. **Code Review**
@@ -354,51 +354,15 @@ Use conventional commits:
 
 ## Release Process
 
-(For maintainers)
+LinkForge uses **Release Please** to automate versioning and changelogs.
 
-### Version Numbering
+1. **Automation**: When code is merged into `main`, Release Please will automatically create (or update) a "Release PR".
+2. **Versioning**: This PR will contain a version bump in `blender_manifest.toml` and an updated `CHANGELOG.md` based on your commit messages.
+3. **Merging**: Once a maintainer merges this Release PR, a GitHub Tag and Release are automatically created.
+4. **Distribution**: The `release.yml` workflow will then build the extension `.zip` and attach it to the GitHub Release.
 
-We use [Semantic Versioning](https://semver.org/):
-
-- **MAJOR**: Breaking changes
-- **MINOR**: New features (backward compatible)
-- **PATCH**: Bug fixes
-
-### Release Steps
-
-1. **Update version**
-   ```bash
-   # Update version in blender_manifest.toml
-   version = "1.1.0"
-   ```
-
-2. **Update CHANGELOG.md**
-   ```markdown
-   ## [1.1.0] - 2025-12-23
-   ### Added
-   - New feature X
-   ### Fixed
-   - Bug Y
-   ```
-
-3. **Create release commit**
-   ```bash
-   git add .
-   git commit -m "chore: release v1.1.0"
-   git tag v1.1.0
-   ```
-
-4. **Build and test**
-   ```bash
-   python3 build_extension.py
-   # Test in Blender
-   ```
-
-5. **Push and create GitHub release**
-   ```bash
-   git push origin main --tags
-   # Create release on GitHub with dist/linkforge-1.1.0.zip
-   ```
+> [!NOTE]
+> This is why **Conventional Commits** are required. Without them, the release automation cannot determine if a change should bump the MAJOR, MINOR, or PATCH version.
 
 ## Common Development Tasks
 

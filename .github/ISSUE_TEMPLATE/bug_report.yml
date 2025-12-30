@@ -1,0 +1,51 @@
+name: "🐞 Bug Report"
+description: "Tell us about a bug you found in LinkForge"
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug! Please fill out the form below to help us investigate.
+  - type: input
+    id: blender_version
+    attributes:
+      label: "Blender Version"
+      placeholder: "e.g. 4.2.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: "Operating System"
+      options:
+        - Windows
+        - macOS (Intel)
+        - macOS (Apple Silicon)
+        - Linux
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: "Description"
+      description: "A clear and concise description of what the bug is."
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: "Step to Reproduce"
+      description: "Steps to reproduce the behavior."
+      placeholder: |
+        1. Open Blender
+        2. Create a Link
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: "Logs / Screenshots"
+      description: "Please attach any relevant screenshots or logs from the Blender console (Window > Toggle System Console)."
+    validations:
+      required: false

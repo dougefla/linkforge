@@ -1,5 +1,9 @@
 # Pull Request
 
+> [!IMPORTANT]
+> This project uses **Conventional Commits** and **Release Please** for automated versioning. 
+> Please ensure your PR title follows the [Conventional Commits](https://www.conventionalcommits.org/) format (e.g., `feat: add x sensor`, `fix: core logic bug`).
+
 ## Description
 Please include a summary of the change and which issue is fixed.
 
