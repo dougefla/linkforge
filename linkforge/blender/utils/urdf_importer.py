@@ -144,14 +144,10 @@ def import_mesh_file(mesh_path: Path, name: str):
         elif ext in (".glb", ".gltf"):
             # Import GLB/GLTF
             try:
-                bpy.ops.import_scene.gltf(filepath=str(mesh_path))
+                bpy.ops.wm.gltf_import(filepath=str(mesh_path))
             except AttributeError:
-                # Fallback for some Blender 4.2+ extension-based setups
-                try:
-                    bpy.ops.valkyrie.gltf(filepath=str(mesh_path))
-                except AttributeError:
-                    # If all else fails, report failure but don't crash
-                    return None
+                # Fallback for older 4.x versions
+                bpy.ops.import_scene.gltf(filepath=str(mesh_path))
         else:
             return None
 
@@ -346,6 +342,16 @@ def create_link_object(link: Link, urdf_dir: Path, collection=None) -> object | 
             collision_obj.display_type = "WIRE"
             collision_obj.hide_render = True
 
+            # Set collision geometry type for UI consistency
+            if isinstance(collision.geometry, Mesh):
+                collision_obj["collision_geometry_type"] = "MESH"
+            elif isinstance(collision.geometry, Box):
+                collision_obj["collision_geometry_type"] = "BOX"
+            elif isinstance(collision.geometry, Cylinder):
+                collision_obj["collision_geometry_type"] = "CYLINDER"
+            elif isinstance(collision.geometry, Sphere):
+                collision_obj["collision_geometry_type"] = "SPHERE"
+
     # Set mass and inertia properties on link object
     if link.inertial and hasattr(link_obj, "linkforge"):
         props = link_obj.linkforge
@@ -420,16 +426,12 @@ def create_joint_object(joint: Joint, link_objects: dict, collection=None) -> ob
         Blender Empty object or None
 
     """
-    # Get preferred empty size from addon preferences
     empty_size = 0.2  # Default fallback
-    try:
-        addon_prefs = bpy.context.preferences.addons.get("bl_ext.user_default.linkforge")
-        if addon_prefs and hasattr(addon_prefs, "preferences"):
-            prefs = addon_prefs.preferences
-            if hasattr(prefs, "joint_empty_size"):
-                empty_size = prefs.joint_empty_size
-    except (AttributeError, KeyError):
-        pass
+    from ..preferences import get_addon_prefs
+
+    addon_prefs = get_addon_prefs(bpy.context)
+    if addon_prefs:
+        empty_size = getattr(addon_prefs, "joint_empty_size", empty_size)
 
     # Create Empty object (ARROWS shows RGB colored axes)
     bpy.ops.object.empty_add(type="ARROWS", location=(0, 0, 0))
