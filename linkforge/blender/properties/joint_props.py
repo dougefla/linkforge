@@ -8,13 +8,14 @@ from __future__ import annotations
 import bpy
 from bpy.props import BoolProperty, EnumProperty, FloatProperty, PointerProperty, StringProperty
 from bpy.types import PropertyGroup
+from typing import Any
 
 from ..utils.property_helpers import find_property_owner
 
 
-def get_joint_name(self):
+def get_joint_name(self: Any) -> str:
     """Getter for joint_name - mirrors the Blender object name."""
-    return self.id_data.name
+    return str(self.id_data.name)
 
 
 def set_joint_name(self, value):

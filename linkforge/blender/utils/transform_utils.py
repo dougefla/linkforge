@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from typing import Any
 
-def set_parent_keep_transform(child_obj, parent_obj):
+
+def set_parent_keep_transform(child_obj: Any, parent_obj: Any) -> None:
     """Set object parent while preserving its world transform (visual location/rotation).
 
     This matches standard Blender 'Object (Keep Transform)' behavior by setting
@@ -30,7 +32,7 @@ def set_parent_keep_transform(child_obj, parent_obj):
     child_obj.matrix_world = pk_mw
 
 
-def clear_parent_keep_transform(child_obj):
+def clear_parent_keep_transform(child_obj: Any) -> None:
     """Clear object parent while preserving its world transform.
 
     Args:
