@@ -5,10 +5,11 @@ These properties are stored on Empty objects and define joint characteristics.
 
 from __future__ import annotations
 
+from typing import Any
+
 import bpy
 from bpy.props import BoolProperty, EnumProperty, FloatProperty, PointerProperty, StringProperty
 from bpy.types import PropertyGroup
-from typing import Any
 
 from ..utils.property_helpers import find_property_owner
 
