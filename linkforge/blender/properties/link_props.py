@@ -19,8 +19,10 @@ from ...core.utils.string_utils import sanitize_name as sanitize_urdf_name
 
 
 def get_link_name(self):
-    """Getter for link_name - mirrors the Blender object name."""
-    return self.id_data.name
+    """Getter for link_name - mirrors and sanitizes the Blender object name."""
+    if not self.id_data:
+        return ""
+    return sanitize_urdf_name(self.id_data.name)
 
 
 def set_link_name(self, value):

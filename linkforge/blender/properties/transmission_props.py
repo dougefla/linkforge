@@ -14,8 +14,13 @@ from ..utils.property_helpers import find_property_owner
 
 
 def get_transmission_name(self):
-    """Getter for transmission_name - mirrors the Blender object name."""
-    return self.id_data.name
+    """Getter for transmission_name - mirrors and sanitizes the Blender object name."""
+    if not self.id_data:
+        return ""
+
+    from .link_props import sanitize_urdf_name
+
+    return sanitize_urdf_name(self.id_data.name)
 
 
 def set_transmission_name(self, value):

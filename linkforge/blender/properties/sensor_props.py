@@ -20,8 +20,14 @@ from ..utils.property_helpers import find_property_owner
 
 
 def get_sensor_name(self):
-    """Getter for sensor_name - mirrors the Blender object name."""
-    return self.id_data.name
+    """Getter for sensor_name - mirrors and sanitizes the Blender object name."""
+    if not self.id_data:
+        return ""
+
+    # Import sanitize function from link_props
+    from .link_props import sanitize_urdf_name
+
+    return sanitize_urdf_name(self.id_data.name)
 
 
 def set_sensor_name(self, value):

@@ -15,8 +15,13 @@ from ..utils.property_helpers import find_property_owner
 
 
 def get_joint_name(self: Any) -> str:
-    """Getter for joint_name - mirrors the Blender object name."""
-    return str(self.id_data.name)
+    """Getter for joint_name - mirrors and sanitizes the Blender object name."""
+    if not self.id_data:
+        return ""
+
+    from .link_props import sanitize_urdf_name
+
+    return sanitize_urdf_name(str(self.id_data.name))
 
 
 def set_joint_name(self, value):
