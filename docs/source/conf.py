@@ -15,8 +15,8 @@ project = "LinkForge"
 copyright = "2025, Arouna Patouossa Mounchili"
 author = "Arouna Patouossa Mounchili"
 # The full version, including alpha/beta/rc tags
-# version: 1.1.0
-release = "1.1.0"
+version = "1.1.0"
+release = version
 
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
