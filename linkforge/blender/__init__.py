@@ -4,7 +4,6 @@ This module contains all Blender-specific code:
 - Property Groups: Store data on Blender objects
 - Operators: User actions/commands
 - Panels: User interface
-- Handlers: Scene and file load event hooks
 """
 
 from __future__ import annotations
