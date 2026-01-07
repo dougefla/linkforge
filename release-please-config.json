@@ -1,11 +1,9 @@
 {
     "packages": {
         ".": {
-            "release-type": "simple",
+            "release-type": "python",
             "extra-files": [
                 "blender_manifest.toml",
-                "pyproject.toml",
-                "linkforge/__init__.py",
                 "docs/source/conf.py",
                 "README.md"
             ],
