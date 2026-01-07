@@ -5,6 +5,7 @@
 # LinkForge
 **Professional URDF & XACRO Exporter for Blender**
 
+[![Latest Release](https://img.shields.io/github/v/release/arounamounchili/linkforge)](https://github.com/arounamounchili/linkforge/releases/latest)
 [![CI](https://github.com/arounamounchili/linkforge/actions/workflows/ci.yml/badge.svg)](https://github.com/arounamounchili/linkforge/actions)
 [![Documentation](https://readthedocs.org/projects/linkforge/badge/?version=latest)](https://linkforge.readthedocs.io/)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
@@ -56,7 +57,7 @@ LinkForge is a professional Blender extension for roboticists.
 3. Click **Install**
 
 ### Method 2: Manual Installation
-1. Download `linkforge-1.1.0.zip` from [Releases](https://github.com/arounamounchili/linkforge/releases)
+1. Download the latest `.zip` package from [Releases](https://github.com/arounamounchili/linkforge/releases/latest)
 2. Open Blender → **Edit > Preferences > Get Extensions**
 3. Click dropdown (⌄) → **Install from Disk**
 4. Select the downloaded `.zip` file
