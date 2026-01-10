@@ -164,3 +164,25 @@ class LINKFORGE_OT_import_urdf(Operator, ImportHelper):
             self.report({"ERROR"}, f"Import failed: {e}")
             traceback.print_exc()
             return {"CANCELLED"}
+
+
+# Registration
+classes = [
+    LINKFORGE_OT_import_urdf,
+]
+
+
+def register():
+    """Register operators."""
+    for cls in classes:
+        bpy.utils.register_class(cls)
+
+
+def unregister():
+    """Unregister operators."""
+    for cls in reversed(classes):
+        bpy.utils.unregister_class(cls)
+
+
+if __name__ == "__main__":
+    register()
