@@ -52,8 +52,8 @@ source .venv/bin/activate  # On macOS/Linux
 ### 2. Install Pre-commit Hooks
 
 ```bash
-# Install pre-commit hooks for automatic code quality checks
-uv run pre-commit install
+# Install all hooks (code quality and conventional commit messages)
+uv run pre-commit install --hook-type pre-commit --hook-type commit-msg
 ```
 
 ### 3. Verify Setup
