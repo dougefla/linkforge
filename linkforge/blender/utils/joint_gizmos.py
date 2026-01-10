@@ -15,10 +15,28 @@ import math
 
 import bpy
 import gpu
+from bpy.types import Context
 from gpu_extras.batch import batch_for_shader
 from mathutils import Vector
 
 from ..preferences import get_addon_prefs
+
+_builtin_shader_name = None
+
+
+def get_shader():
+    """Get the appropriate builtin shader name for the current Blender version."""
+    global _builtin_shader_name
+    if _builtin_shader_name is None:
+        try:
+            # 4.3+ name
+            gpu.shader.from_builtin("FLAT_COLOR")
+            _builtin_shader_name = "FLAT_COLOR"
+        except Exception:
+            # Older versions
+            _builtin_shader_name = "3D_FLAT_COLOR"
+    return gpu.shader.from_builtin(_builtin_shader_name)
+
 
 # Global drawing handle
 _draw_handle = None
@@ -210,10 +228,7 @@ def _draw_internal():
     # Draw lines (shafts)
     if all_line_positions:
         # Resolve shader name (FLAT_COLOR in 4.3+, 3D_FLAT_COLOR previously)
-        try:
-            shader = gpu.shader.from_builtin("FLAT_COLOR")
-        except Exception:
-            shader = gpu.shader.from_builtin("3D_FLAT_COLOR")
+        shader = get_shader()
 
         batch = batch_for_shader(
             shader,
@@ -229,10 +244,7 @@ def _draw_internal():
 
     # Draw triangles (arrow cones)
     if all_tri_positions:
-        try:
-            shader = gpu.shader.from_builtin("FLAT_COLOR")
-        except Exception:
-            shader = gpu.shader.from_builtin("3D_FLAT_COLOR")
+        shader = get_shader()
 
         batch = batch_for_shader(
             shader,
@@ -317,7 +329,7 @@ def unregister():
         _draw_handle = None
 
 
-def update_viz_handle(context):
+def update_viz_handle(context: Context):
     """Enable or disable the draw handler based on user preferences.
 
     This is called by the preference update function.
