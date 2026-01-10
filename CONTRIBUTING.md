@@ -309,7 +309,7 @@ Our `ruff` configuration (in `pyproject.toml`):
 ```toml
 [tool.ruff]
 line-length = 100
-target-version = "py311"
+target-version = "py313"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "UP", "B", "A", "C4", "SIM"]

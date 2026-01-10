@@ -82,7 +82,6 @@ graph LR
     style Panels fill:#4fc3f7
     style Operators fill:#4fc3f7
     style Properties fill:#81c784
-    style Handlers fill:#ffb74d
     style Utils fill:#ba68c8
 ```
 
