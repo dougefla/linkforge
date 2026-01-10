@@ -8,12 +8,13 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 import bpy
+from bpy.types import Context
 
 if TYPE_CHECKING:
     pass
 
 
-def find_property_owner(context: Any, property_group: Any, property_attr: str) -> Any | None:
+def find_property_owner(context: Context, property_group: Any, property_attr: str) -> Any | None:
     """Find the Blender object that owns a given property group instance.
 
     This is an optimized helper for property update callbacks that need to find
