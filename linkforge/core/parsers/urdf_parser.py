@@ -1235,7 +1235,7 @@ def _detect_xacro_file(root: ET.Element, filepath: Path) -> None:
             "operator in Blender which automatically converts XACRO to URDF.\n\n"
             "If using this parser programmatically, convert XACRO to URDF first:\n"
             "   from xacrodoc import XacroDoc\n"
-            "   doc = XacroDoc.from_file('{filepath.name}')\n"
+            f"   doc = XacroDoc.from_file('{filepath.name}')\n"
             "   robot = parse_urdf_string(doc.to_urdf_string())\n"
         )
 
