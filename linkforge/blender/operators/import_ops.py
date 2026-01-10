@@ -1,0 +1,166 @@
+"""Blender Operators for importing robot models from URDF/XACRO.
+
+This module implements the user-facing operators that handle the import of
+robot descriptions into the Blender environment.
+"""
+
+from __future__ import annotations
+
+import os
+import traceback
+from contextlib import contextmanager
+from pathlib import Path
+
+from bpy.props import StringProperty
+from bpy.types import Operator
+from bpy_extras.io_utils import ImportHelper
+
+from ...core.logging_config import get_logger
+
+logger = get_logger(__name__)
+
+
+@contextmanager
+def working_directory(path: Path):
+    """Context manager for temporarily changing the working directory."""
+    old_cwd = os.getcwd()
+    try:
+        os.chdir(path)
+        yield path
+    finally:
+        os.chdir(old_cwd)
+
+
+class LINKFORGE_OT_import_urdf(Operator, ImportHelper):
+    """Import robot from URDF or XACRO file"""
+
+    bl_idname = "linkforge.import_urdf"
+    bl_label = "Import Robot"
+    bl_description = "Import robot from URDF or XACRO file (auto-detects format)"
+
+    # ImportHelper properties
+    filename_ext = ".urdf"
+    filter_glob: StringProperty(  # type: ignore
+        default="*.urdf;*.xacro;*.urdf.xacro",
+        options={"HIDDEN"},
+    )
+
+    def execute(self, context):
+        """Execute the import."""
+        from ...core.parsers.urdf_parser import parse_urdf, parse_urdf_string
+        from ..utils.urdf_importer import import_robot_to_scene
+
+        # Parse URDF/XACRO file
+        urdf_path = Path(self.filepath)
+
+        # Validate that the path is a file, not a directory
+        if not urdf_path.is_file():
+            if urdf_path.is_dir():
+                self.report({"ERROR"}, f"Selected path is a directory, not a file: {urdf_path}")
+            else:
+                self.report({"ERROR"}, f"File not found: {urdf_path}")
+            return {"CANCELLED"}
+
+        # Detect if this is a XACRO file
+        is_xacro = urdf_path.suffix == ".xacro" or urdf_path.name.endswith(".urdf.xacro")
+
+        try:
+            if is_xacro:
+                # Convert XACRO to URDF using xacrodoc (bundled dependency)
+                from xacrodoc import XacroDoc
+
+                self.report({"INFO"}, f"Processing XACRO file: {urdf_path.name}")
+
+                # Change to XACRO file's directory to resolve relative includes
+                # xacrodoc resolves <xacro:include> paths relative to CWD
+                urdf_string = None
+
+                try:
+                    # Use context manager to safely change working directory
+                    with working_directory(urdf_path.parent):
+                        doc = XacroDoc.from_file(urdf_path.name)
+                        urdf_string = doc.to_urdf_string()
+                except Exception as e:
+                    # Check if this is a PackageNotFoundError or XacroException wrapping it
+                    exception_name = type(e).__name__
+                    exception_str = str(e)
+
+                    is_package_error = exception_name == "PackageNotFoundError" or (
+                        exception_name == "XacroException"
+                        and "PackageNotFoundError" in exception_str
+                    )
+
+                    if is_package_error:
+                        # Extract package name from error message
+                        package_name = "unknown"
+                        if "PackageNotFoundError" in exception_str:
+                            parts = exception_str.split(":")
+                            if len(parts) > 1:
+                                package_name = parts[-1].strip().split()[0]
+                            else:
+                                package_name = exception_str.split()[-1]
+
+                        # Show professional error message with actionable guidance
+                        error_msg = (
+                            f"XACRO processing failed: Missing ROS package '{package_name}'.\n\n"
+                            f"Solutions:\n"
+                            f"1. Use the URDF version of this file instead.\n"
+                            f"2. Install the required ROS package on your system.\n"
+                            f"3. Edit the XACRO file to use relative paths instead of $(find ...)."
+                        )
+                        self.report({"ERROR"}, error_msg)
+                        return {"CANCELLED"}
+                    else:
+                        # Not a package error, re-raise
+                        raise
+
+                # Parse URDF string with directory for mesh path validation
+                self.report({"INFO"}, "Parsing URDF...")
+                robot = parse_urdf_string(urdf_string, urdf_directory=urdf_path.parent)
+            else:
+                # Standard URDF import
+                robot = parse_urdf(urdf_path)
+
+        except FileNotFoundError:
+            self.report({"ERROR"}, f"File not found: {urdf_path}")
+            return {"CANCELLED"}
+        except Exception as e:
+            # Final catch-all for unexpected errors
+            self.report({"ERROR"}, f"Failed to parse file: {type(e).__name__}: {e}")
+            traceback.print_exc()
+            return {"CANCELLED"}
+
+        # Import to scene
+        try:
+            success = import_robot_to_scene(robot, urdf_path, context)
+            if success:
+                # Sync collision visibility with current scene settings
+                if hasattr(context.scene, "linkforge"):
+                    robot_props = context.scene.linkforge
+                    # Replicate simple visibility logic
+                    if not robot_props.show_collisions:
+                        # Hide all collision meshes if toggle is off
+                        for obj in context.scene.objects:
+                            if (
+                                obj.parent
+                                and hasattr(obj.parent, "linkforge")
+                                and obj.parent.linkforge.is_robot_link
+                                and "_collision" in obj.name.lower()
+                            ):
+                                obj.hide_viewport = True
+
+                file_type = "XACRO" if is_xacro else "URDF"
+                self.report(
+                    {"INFO"},
+                    f"Imported {file_type}: '{robot.name}' "
+                    f"({len(robot.links)} links, {len(robot.joints)} joints)",
+                )
+                return {"FINISHED"}
+            else:
+                self.report({"ERROR"}, "Failed to import robot to scene")
+                return {"CANCELLED"}
+
+        except Exception as e:
+            self.report({"ERROR"}, f"Import failed: {e}")
+            traceback.print_exc()
+            return {"CANCELLED"}

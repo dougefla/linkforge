@@ -1,16 +1,7 @@
 """Blender Operators for exporting robot models to URDF/XACRO.
 
-This module implements the user-facing operators that bridge the Blender
-environment with the LinkForge generation engine. It handles:
-
-- **Scene-to-Model Conversion**: Orchestrating the extraction of physical
-  and geometric data from Blender objects.
-- **Validation Execution**: Triggering the built-in validator to catch
-  common structural errors before export.
-- **File Management**: Managing file paths, textures, and mesh export
-  directories (collada/stl).
-- **Generator Invocation**: Configuring and running the `URDFGenerator` or
-  `XACROGenerator` with user-defined settings.
+This module implements the user-facing operators that handle the export of
+robot models from Blender to URDF or XACRO formats.
 """
 
 from __future__ import annotations
@@ -22,7 +13,7 @@ from pathlib import Path
 import bpy
 from bpy.props import StringProperty
 from bpy.types import Operator
-from bpy_extras.io_utils import ExportHelper, ImportHelper
+from bpy_extras.io_utils import ExportHelper
 
 from ...core.logging_config import get_logger
 
@@ -31,23 +22,7 @@ logger = get_logger(__name__)
 
 @contextmanager
 def working_directory(path: Path):
-    """Context manager for temporarily changing the working directory.
-
-    This is safer than manually changing os.getcwd() as it ensures the
-    directory is always restored, even if an exception occurs.
-
-    Args:
-        path: The directory to change to
-
-    Yields:
-        The new working directory path
-
-    Example:
-        >>> with working_directory(Path("/tmp")):
-        ...     # Do work in /tmp
-        ...     pass
-        >>> # Automatically restored to original directory
-    """
+    """Context manager for temporarily changing the working directory."""
     old_cwd = os.getcwd()
     try:
         os.chdir(path)
@@ -85,8 +60,6 @@ class LINKFORGE_OT_export_urdf(Operator, ExportHelper):
     def execute(self, context):
         """Execute the export."""
         # Import here to avoid circular dependencies
-        from pathlib import Path
-
         from ...core.generators import URDFGenerator, XACROGenerator
         from ..utils.converters import scene_to_robot
 
@@ -191,150 +164,6 @@ class LINKFORGE_OT_export_urdf(Operator, ExportHelper):
             return {"CANCELLED"}
 
 
-class LINKFORGE_OT_import_urdf(Operator, ImportHelper):
-    """Import robot from URDF or XACRO file"""
-
-    bl_idname = "linkforge.import_urdf"
-    bl_label = "Import Robot"
-    bl_description = "Import robot from URDF or XACRO file (auto-detects format)"
-
-    # ImportHelper properties
-    filename_ext = ".urdf"
-    filter_glob: StringProperty(  # type: ignore
-        default="*.urdf;*.xacro;*.urdf.xacro",
-        options={"HIDDEN"},
-    )
-
-    def execute(self, context):
-        """Execute the import."""
-        from pathlib import Path
-
-        from ...core.parsers.urdf_parser import parse_urdf, parse_urdf_string
-        from ..utils.urdf_importer import import_robot_to_scene
-
-        # Parse URDF/XACRO file
-        urdf_path = Path(self.filepath)
-
-        # Validate that the path is a file, not a directory
-        if not urdf_path.is_file():
-            if urdf_path.is_dir():
-                self.report({"ERROR"}, f"Selected path is a directory, not a file: {urdf_path}")
-            else:
-                self.report({"ERROR"}, f"File not found: {urdf_path}")
-            return {"CANCELLED"}
-
-        # Detect if this is a XACRO file
-        is_xacro = urdf_path.suffix == ".xacro" or urdf_path.name.endswith(".urdf.xacro")
-
-        try:
-            if is_xacro:
-                # Convert XACRO to URDF using xacrodoc (bundled dependency)
-                from xacrodoc import XacroDoc
-
-                self.report({"INFO"}, f"Converting XACRO file: {urdf_path.name}")
-
-                # Change to XACRO file's directory to resolve relative includes
-                # xacrodoc resolves <xacro:include> paths relative to CWD
-                urdf_string = None
-
-                try:
-                    # Use context manager to safely change working directory
-                    with working_directory(urdf_path.parent):
-                        doc = XacroDoc.from_file(urdf_path.name)
-                        urdf_string = doc.to_urdf_string()
-                except Exception as e:
-                    # Check if this is a PackageNotFoundError or XacroException wrapping it
-                    exception_name = type(e).__name__
-                    exception_str = str(e)
-
-                    is_package_error = exception_name == "PackageNotFoundError" or (
-                        exception_name == "XacroException"
-                        and "PackageNotFoundError" in exception_str
-                    )
-
-                    if is_package_error:
-                        # Extract package name from error message
-                        package_name = "unknown"
-                        if "PackageNotFoundError" in exception_str:
-                            parts = exception_str.split(":")
-                            if len(parts) > 1:
-                                package_name = parts[-1].strip().split()[0]
-                            else:
-                                package_name = exception_str.split()[-1]
-
-                        # Show professional error message with actionable guidance
-                        error_msg = (
-                            f"XACRO import failed: Missing ROS package '{package_name}'.\n\n"
-                            f"Solutions:\n"
-                            f"1. Use the URDF version of this file instead.\n"
-                            f"2. Install the required ROS package on your system.\n"
-                            f"3. Edit the XACRO file to use relative paths instead of $(find ...)."
-                        )
-                        self.report({"ERROR"}, error_msg)
-                        return {"CANCELLED"}
-                    else:
-                        # Not a package error, re-raise
-                        raise
-
-                # Parse URDF string with directory for mesh path validation
-                self.report({"INFO"}, "Parsing URDF...")
-                robot = parse_urdf_string(urdf_string, urdf_directory=urdf_path.parent)
-            else:
-                # Standard URDF import
-                robot = parse_urdf(urdf_path)
-
-        except FileNotFoundError:
-            self.report({"ERROR"}, f"File not found: {urdf_path}")
-            return {"CANCELLED"}
-        except Exception as e:
-            # Final catch-all for unexpected errors
-            self.report({"ERROR"}, f"Failed to parse file: {type(e).__name__}: {e}")
-            import traceback
-
-            traceback.print_exc()
-            return {"CANCELLED"}
-
-        # Import to scene
-        try:
-            success = import_robot_to_scene(robot, urdf_path, context)
-            if success:
-                # Sync collision visibility with current scene settings
-                if hasattr(context.scene, "linkforge"):
-                    robot_props = context.scene.linkforge
-                    # We can't easily import the update function here due to circular imports,
-                    # so we replicate the simple visibility logic
-                    show_collisions = robot_props.show_collisions
-
-                    if not show_collisions:
-                        # Hide all collision meshes if toggle is off
-                        for obj in context.scene.objects:
-                            if (
-                                obj.parent
-                                and hasattr(obj.parent, "linkforge")
-                                and obj.parent.linkforge.is_robot_link
-                                and "_collision" in obj.name.lower()
-                            ):
-                                obj.hide_viewport = True
-
-                file_type = "XACRO" if is_xacro else "URDF"
-                self.report(
-                    {"INFO"},
-                    f"Imported {file_type}: '{robot.name}' "
-                    f"({len(robot.links)} links, {len(robot.joints)} joints)",
-                )
-                return {"FINISHED"}
-            else:
-                self.report({"ERROR"}, "Failed to import robot to scene")
-                return {"CANCELLED"}
-
-        except Exception as e:
-            self.report({"ERROR"}, f"Import failed: {e}")
-            import traceback
-
-            traceback.print_exc()
-            return {"CANCELLED"}
-
-
 class LINKFORGE_OT_validate_robot(Operator):
     """Validate robot structure"""
 
@@ -351,7 +180,6 @@ class LINKFORGE_OT_validate_robot(Operator):
         validation_props = context.window_manager.linkforge_validation
         validation_props.clear()
 
-        # Convert scene to robot
         # Convert scene to robot
         try:
             robot, _ = scene_to_robot(context)
@@ -438,7 +266,6 @@ class LINKFORGE_OT_validate_robot(Operator):
 # Registration
 classes = [
     LINKFORGE_OT_export_urdf,
-    LINKFORGE_OT_import_urdf,
     LINKFORGE_OT_validate_robot,
 ]
 
