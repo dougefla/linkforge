@@ -169,7 +169,13 @@ def update_collision_visibility(self, context):
 # Registration
 def register():
     """Register property group."""
-    bpy.utils.register_class(RobotPropertyGroup)
+    try:
+        bpy.utils.register_class(RobotPropertyGroup)
+    except ValueError:
+        # If already registered (e.g. from reload), unregister first to ensure clean state
+        bpy.utils.unregister_class(RobotPropertyGroup)
+        bpy.utils.register_class(RobotPropertyGroup)
+
     bpy.types.Scene.linkforge = bpy.props.PointerProperty(type=RobotPropertyGroup)
 
 

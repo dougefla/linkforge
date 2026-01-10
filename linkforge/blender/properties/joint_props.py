@@ -280,7 +280,13 @@ class JointPropertyGroup(PropertyGroup):
 # Registration
 def register():
     """Register property group."""
-    bpy.utils.register_class(JointPropertyGroup)
+    try:
+        bpy.utils.register_class(JointPropertyGroup)
+    except ValueError:
+        # If already registered (e.g. from reload), unregister first to ensure clean state
+        bpy.utils.unregister_class(JointPropertyGroup)
+        bpy.utils.register_class(JointPropertyGroup)
+
     bpy.types.Object.linkforge_joint = bpy.props.PointerProperty(type=JointPropertyGroup)
 
 

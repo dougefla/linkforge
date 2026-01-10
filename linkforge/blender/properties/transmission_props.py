@@ -210,7 +210,13 @@ class TransmissionPropertyGroup(PropertyGroup):
 # Registration
 def register():
     """Register property group."""
-    bpy.utils.register_class(TransmissionPropertyGroup)
+    try:
+        bpy.utils.register_class(TransmissionPropertyGroup)
+    except ValueError:
+        # If already registered (e.g. from reload), unregister first to ensure clean state
+        bpy.utils.unregister_class(TransmissionPropertyGroup)
+        bpy.utils.register_class(TransmissionPropertyGroup)
+
     bpy.types.Object.linkforge_transmission = bpy.props.PointerProperty(
         type=TransmissionPropertyGroup
     )

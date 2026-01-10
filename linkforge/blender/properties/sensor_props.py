@@ -325,7 +325,13 @@ class SensorPropertyGroup(PropertyGroup):
 # Registration
 def register():
     """Register property group."""
-    bpy.utils.register_class(SensorPropertyGroup)
+    try:
+        bpy.utils.register_class(SensorPropertyGroup)
+    except ValueError:
+        # If already registered (e.g. from reload), unregister first to ensure clean state
+        bpy.utils.unregister_class(SensorPropertyGroup)
+        bpy.utils.register_class(SensorPropertyGroup)
+
     bpy.types.Object.linkforge_sensor = bpy.props.PointerProperty(type=SensorPropertyGroup)
 
 

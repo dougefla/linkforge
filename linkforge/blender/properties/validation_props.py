@@ -197,8 +197,20 @@ class ValidationResultProperty(PropertyGroup):
 # Registration
 def register():
     """Register property groups."""
-    bpy.utils.register_class(ValidationIssueProperty)
-    bpy.utils.register_class(ValidationResultProperty)
+    # Register ValidationIssueProperty
+    try:
+        bpy.utils.register_class(ValidationIssueProperty)
+    except ValueError:
+        bpy.utils.unregister_class(ValidationIssueProperty)
+        bpy.utils.register_class(ValidationIssueProperty)
+
+    # Register ValidationResultProperty
+    try:
+        bpy.utils.register_class(ValidationResultProperty)
+    except ValueError:
+        bpy.utils.unregister_class(ValidationResultProperty)
+        bpy.utils.register_class(ValidationResultProperty)
+
     bpy.types.WindowManager.linkforge_validation = bpy.props.PointerProperty(
         type=ValidationResultProperty
     )
