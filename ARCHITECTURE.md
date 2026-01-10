@@ -90,10 +90,10 @@ graph LR
 
 | Module | Purpose | Key Files |
 |--------|---------|-----------|
-| **Panels** | UI layout and display | `robot_panel.py`, `joint_panel.py`, `link_panel.py`, `sensor_panel.py`, `transmission_panel.py` |
-| **Operators** | User actions (create, export, etc.) | `export_ops.py`, `link_ops.py`, `joint_ops.py`, `sensor_ops.py`, `transmission_ops.py` |
-| **Properties** | Blender scene data storage | `robot_props.py`, `joint_props.py`, `link_props.py`, `sensor_props.py`, `transmission_props.py` |
-| **Utils** | Conversion between Blender ↔ Core | `converters.py`, `urdf_importer.py`, `mesh_export.py`, `joint_gizmos.py` |
+| **Panels** | UI layout and display | `robot_panel.py`, `joint_panel.py`, `link_panel.py`, `sensor_panel.py`, `transmission_panel.py`, `build_panel.py` |
+| **Operators** | User actions (import, export, etc.) | `import_ops.py`, `export_ops.py`, `link_ops.py`, `joint_ops.py`, `sensor_ops.py`, `transmission_ops.py` |
+| **Properties** | Blender scene data storage | `robot_props.py`, `joint_props.py`, `link_props.py`, `sensor_props.py`, `transmission_props.py`, `validation_props.py` |
+| **Utils** | Conversion between Blender ↔ Core | `converters.py`, `urdf_importer.py`, `mesh_export.py`, `joint_gizmos.py`, `property_helpers.py` |
 
 ### 2. Core Logic Layer (`linkforge/core/`)
 
@@ -143,19 +143,21 @@ graph TB
 sequenceDiagram
     participant User
     participant UI as Blender UI
+    participant Op as Import Operator
     participant Parser as URDF Parser
     participant Models as Core Models
     participant Importer as URDF Importer
     participant Blender as Blender Scene
 
     User->>UI: Select URDF file
-    UI->>Parser: parse_urdf(file)
+    UI->>Op: Invoke Import
+    Op->>Parser: parse_urdf(file)
     Parser->>Parser: Validate XML
     Parser->>Models: Create Robot model
     Models->>Models: Validate structure
     Models-->>Parser: Robot object
-    Parser-->>UI: Robot object
-    UI->>Importer: import_urdf(robot)
+    Parser-->>Op: Robot object
+    Op->>Importer: import_robot(robot)
     Importer->>Blender: Create objects
     Importer->>Blender: Set properties
     Importer->>Blender: Create hierarchy
@@ -417,5 +419,5 @@ graph TB
 
 ---
 
-**Last Updated:** 2025-12-27
+**Last Updated:** 2026-01-10
 **Version:** 1.1.0

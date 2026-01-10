@@ -9,6 +9,11 @@ Blender-specific modules for UI and scene integration.
 User actions and commands.
 
 ```{eval-rst}
+.. automodule:: linkforge.blender.operators.import_ops
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 .. automodule:: linkforge.blender.operators.export_ops
    :members:
    :undoc-members:
@@ -20,6 +25,16 @@ User actions and commands.
    :show-inheritance:
 
 .. automodule:: linkforge.blender.operators.joint_ops
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. automodule:: linkforge.blender.operators.sensor_ops
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. automodule:: linkforge.blender.operators.transmission_ops
    :members:
    :undoc-members:
    :show-inheritance:
@@ -44,6 +59,21 @@ Blender scene properties for storing robot data.
    :members:
    :undoc-members:
    :show-inheritance:
+
+.. automodule:: linkforge.blender.properties.sensor_props
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. automodule:: linkforge.blender.properties.transmission_props
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. automodule:: linkforge.blender.properties.validation_props
+   :members:
+   :undoc-members:
+   :show-inheritance:
 ```
 
 ## Utilities
@@ -62,6 +92,11 @@ Conversion between Blender and core models.
    :show-inheritance:
 
 .. automodule:: linkforge.blender.utils.mesh_export
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. automodule:: linkforge.blender.utils.property_helpers
    :members:
    :undoc-members:
    :show-inheritance:
