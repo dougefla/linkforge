@@ -41,8 +41,8 @@ uv run ruff check .
 # Type check
 uv run mypy linkforge
 
-# Install pre-commit hooks
-uv run pre-commit install
+# Install all hooks (code quality and conventional commit messages)
+uv run pre-commit install --hook-type pre-commit --hook-type commit-msg
 ```
 
 ## 📦 Building & Distribution

@@ -3,7 +3,7 @@
 </div>
 
 # LinkForge
-**Professional URDF & XACRO Exporter for Blender**
+**Build Simulation-Ready Robots in Blender**
 
 [![Latest Release](https://img.shields.io/github/v/release/arounamounchili/linkforge)](https://github.com/arounamounchili/linkforge/releases/latest)
 [![CI](https://github.com/arounamounchili/linkforge/actions/workflows/ci.yml/badge.svg)](https://github.com/arounamounchili/linkforge/actions)
@@ -29,6 +29,7 @@ LinkForge is a professional Blender extension for roboticists.
 
 | Feature | Support | Details |
 | :--- | :--- | :--- |
+| **Links** | ✅ Full | Visual/Collision Geometry, Materials, Inertial Properties |
 | **Joint Types** | ✅ Full | Fixed, Revolute, Continuous, Prismatic, Planar, Floating |
 | **Physics** | ✅ Full | Automatic Mass & Inertia (Primitive & Mesh) |
 | **Sensors** | ✅ Full | Camera, LiDAR, IMU, GPS, Depth, Contact |
@@ -148,7 +149,7 @@ uv run ruff check .
 # Type check
 uv run mypy linkforge
 
-# Install pre-commit hooks (code quality & commit messages)
+# Install all hooks (code quality and conventional commit messages)
 uv run pre-commit install --hook-type pre-commit --hook-type commit-msg
 ```
 

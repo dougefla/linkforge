@@ -13,7 +13,7 @@ version = "1.1.0"
 name = "LinkForge"
 
 # Short description (tagline) - max ~100 characters
-tagline = "Professional URDF & XACRO exporter for robotics"
+tagline = "Build Simulation-Ready Robots in Blender"
 
 # Extension type
 type = "add-on"
