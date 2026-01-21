@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
+from ..utils.string_utils import is_valid_urdf_name
 from .geometry import Transform, Vector3
 
 
@@ -92,7 +93,7 @@ class Joint:
             raise ValueError("Joint name cannot be empty")
 
         # Validate naming convention
-        if not all(c.isalnum() or c in ("_", "-") for c in self.name):
+        if not is_valid_urdf_name(self.name):
             raise ValueError(
                 f"Joint name '{self.name}' contains invalid characters. "
                 "Use only alphanumeric, underscore, or hyphen."
@@ -129,9 +130,16 @@ class Joint:
         if self.type in (JointType.REVOLUTE, JointType.PRISMATIC) and self.limits is None:
             raise ValueError(f"{self.type.value} joints require limits")
 
-        # Fixed joints should not have limits
+        # Fixed joints should not have limits - auto-fix legacy URDFs
         if self.type == JointType.FIXED and self.limits is not None:
-            raise ValueError("Fixed joints cannot have limits")
+            from ...core.logging_config import get_logger
+
+            logger = get_logger(__name__)
+            logger.warning(
+                f"Fixed joint '{self.name}' has limits (ignored). "
+                "Fixed joints cannot move and should not have limits."
+            )
+            object.__setattr__(self, "limits", None)
 
         # Validate and normalize axis if present
         if self.axis is not None:
