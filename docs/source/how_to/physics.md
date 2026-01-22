@@ -28,9 +28,10 @@ Sometimes, the geometric center is not the physical center of mass (e.g., a batt
 
 ### 🎯 Visualizing the Center of Mass
 When you modify the Inertial Origin:
-- An **Orange/White Axis** wireframe appears in the viewport.
-- This represents the **Principal Axes of Inertia**.
-- Moving the "Pos" values will move this wireframe relative to the link origin.
+- A **Yellow Wireframe Sphere** (Center of Mass) with **Orange/White Axes** will be **permanently visible** in the viewport.
+- This represents the **Principal Axes of Inertia** and the exact physical center of the object.
+- Moving the **Pos** values will shift this visualization relative to the link origin.
+- Use **Global Preferences > Inertia Visualization** to resize or hide these markers.
 
 ### Example: Lowering the COM
 To make a mobile robot more stable, you often want the center of mass to be low.
@@ -44,5 +45,5 @@ To make a mobile robot more stable, you often want the center of mass to be low.
 If your robot explodes or flies away immediately upon spawning:
 
 1. **Check for Negative/Zero Inertia**: Run the LinkForge **Validator**. It will catch zero-mass links or invalid tensors.
-2. **Check Collisions**: Ensure adjacent links have collisions that don't overlap in the "Zero Configuration".  Use the `show_in_front` X-Ray view to inspect internal collisions.
+2. **Check Collisions**: Ensure adjacent links have collisions that don't overlap in the "Zero Configuration". LinkForge automatically displays generated collision meshes in "X-Ray" mode (Visible In Front) to help you inspect internal overlaps.
 3. **Inertia Too Small**: Very small inertia values (like `1e-9`) can cause numerical instability in physics engines. Try increasing the mass or size slightly if possible, or bundle small parts into a larger parent link.
