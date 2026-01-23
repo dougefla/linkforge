@@ -8,6 +8,7 @@ from bpy.types import Context, Operator
 
 from ...core.logging_config import get_logger
 from ..properties.link_props import sanitize_urdf_name
+from ..utils.decorators import safe_execute
 
 logger = get_logger(__name__)
 
@@ -98,22 +99,16 @@ def regenerate_collision_mesh(link_obj, collision_obj):
     # Store collision object's current state
     old_hide_viewport = collision_obj.hide_viewport
     old_hide_render = collision_obj.hide_render
-    old_location = collision_obj.location.copy()
-    old_rotation = collision_obj.rotation_euler.copy()
 
     # Remove old collision
     bpy.data.objects.remove(collision_obj, do_unlink=True)
 
     # Create new compound convex hull collision from ALL visuals
-    merged_obj = _merge_visual_meshes(visual_children, bpy.context)
+    # Geometry is already baked in Link-Local space
+    merged_obj = _merge_visual_meshes(visual_children, link_obj, bpy.context)
 
     if merged_obj is None:
         return
-
-    # Clear parent temporarily
-    merged_obj.parent = None
-    merged_obj.location = old_location
-    merged_obj.rotation_euler = old_rotation
 
     # Apply convex hull to merged mesh
     bpy.context.view_layer.objects.active = merged_obj
@@ -141,10 +136,10 @@ def regenerate_collision_mesh(link_obj, collision_obj):
     merged_obj.name = f"{link_name}_collision"
 
     # Strict Alignment Parenting
+    # For Convex Hull, we align with the link origin because geometry is already local
     merged_obj.parent = link_obj
     merged_obj.matrix_parent_inverse.identity()
-    merged_obj.location = visual_children[0].location
-    merged_obj.rotation_euler = visual_children[0].rotation_euler
+    merged_obj.matrix_local.identity()
     merged_obj.scale = (1, 1, 1)  # Scale baked
 
     merged_obj.display_type = "WIRE"
@@ -220,11 +215,11 @@ def create_collision_for_link(link_obj, collision_type, context):
         )
         reference_visual = visual_children[0]
     else:  # CONVEX_HULL
-        # Merge ALL visuals into compound collision
-        collision_obj = _create_convex_hull_collision_compound(visual_children, link_name, context)
-        # Use first visual as reference for positioning
-        reference_visual = visual_children[0]
-        # Convex hull geometry is already offset relative to origin by the merger
+        # Merge ALL visuals into compound collision (geometry is baked link-local)
+        collision_obj = _create_convex_hull_collision_compound(visual_children, link_obj, context)
+        # For compound hull, we use the link itself as the local reference frame
+        # Since merged geometry is already in link-local coordinates, the local matrix must be Identity
+        reference_visual = None
         local_offset = mathutils.Vector((0, 0, 0))
 
     if collision_obj is None:
@@ -233,16 +228,17 @@ def create_collision_for_link(link_obj, collision_type, context):
     # Parent to link using Strict Alignment
     collision_obj.parent = link_obj
 
-    # Copy both local transform AND parent inverse to ensure perfect alignment
-    # even if the visual mesh was manually parented with "Keep Transform"
-    collision_obj.matrix_parent_inverse = reference_visual.matrix_parent_inverse.copy()
-
-    # Align with strict precision: Visual Matrix x Local Primitive Offset
-    # This accounts for cases where the visual origin is at a pivot point
-    # but the geometry is offset from that pivot.
-    collision_obj.matrix_local = reference_visual.matrix_local @ mathutils.Matrix.Translation(
-        local_offset
-    )
+    # Align with strict precision
+    if reference_visual:
+        # PRIMITIVE: Align with visual x local offset
+        collision_obj.matrix_parent_inverse = reference_visual.matrix_parent_inverse.copy()
+        collision_obj.matrix_local = reference_visual.matrix_local @ mathutils.Matrix.Translation(
+            local_offset
+        )
+    else:
+        # CONVEX HULL: Already baked link-local, just reset transforms
+        collision_obj.matrix_parent_inverse.identity()
+        collision_obj.matrix_local.identity()
 
     collision_obj.scale = (1, 1, 1)  # Scale was already baked into geometry
 
@@ -333,15 +329,16 @@ def _create_primitive_collision(visual_obj, prim_type, link_name, context):
     return collision_obj, local_center
 
 
-def _merge_visual_meshes(visual_objects, context):
+def _merge_visual_meshes(visual_objects, link_obj, context):
     """Merge multiple visual meshes into a single temporary mesh for compound collision.
 
-    This creates a compound mesh that represents all visual geometry,
-    which is then used to generate a single accurate collision hull.
-    This follows industry best practices (ROS, Gazebo, MoveIt).
+    This creates a compound mesh that represents all visual geometry in the
+    LOCAL space of the link, which is then used to generate a single
+    accurate collision hull aligned with the link origin.
 
     Args:
         visual_objects: List of visual mesh objects to merge
+        link_obj: The parent link object (coordinate frame reference)
         context: Blender context
 
     Returns:
@@ -351,7 +348,9 @@ def _merge_visual_meshes(visual_objects, context):
         return None
 
     # Log collision generation for debugging and user feedback
-    logger.info(f"Compound collision: merging {len(visual_objects)} visual mesh(es)")
+    logger.info(
+        f"Compound collision: merging {len(visual_objects)} visual mesh(es) for {link_obj.name}"
+    )
     for i, vis in enumerate(visual_objects):
         logger.info(f"  [{i + 1}] {vis.name}")
 
@@ -369,8 +368,11 @@ def _merge_visual_meshes(visual_objects, context):
         for col in visual_obj.users_collection:
             col.objects.link(dup)
 
-        # Clear parent and apply transforms to bake world position into geometry
+        # Apply transforms to bake local position (relative to link) into geometry
+        # Vertex_Link = Link_World_Inv @ Vertex_World
+        # We unparent first to ensure matrix_world correctly represents the local space
         dup.parent = None
+        dup.matrix_world = link_obj.matrix_world.inverted() @ visual_obj.matrix_world
 
         # Select and make active for transform application
         bpy.ops.object.select_all(action="DESELECT")
@@ -400,7 +402,7 @@ def _merge_visual_meshes(visual_objects, context):
     return merged_obj
 
 
-def _create_convex_hull_collision_compound(visual_objects, link_name, context):
+def _create_convex_hull_collision_compound(visual_objects, link_obj, context):
     """Create compound convex hull collision from multiple visual meshes.
 
     This merges all visual children into a single collision mesh, following
@@ -408,14 +410,14 @@ def _create_convex_hull_collision_compound(visual_objects, link_name, context):
 
     Args:
         visual_objects: List of visual mesh objects to merge
-        link_name: Name of the link
+        link_obj: The parent link object
         context: Blender context
 
     Returns:
         Collision object with compound convex hull
     """
-    # Merge all visual meshes into compound mesh
-    merged_obj = _merge_visual_meshes(visual_objects, context)
+    # Merge all visual meshes into compound mesh (baked relative to link)
+    merged_obj = _merge_visual_meshes(visual_objects, link_obj, context)
 
     if merged_obj is None:
         return None
@@ -428,7 +430,7 @@ def _create_convex_hull_collision_compound(visual_objects, link_name, context):
     bpy.ops.object.mode_set(mode="OBJECT")
 
     # Name it
-    merged_obj.name = f"{link_name}_collision"
+    merged_obj.name = f"{link_obj.name}_collision"
 
     return merged_obj
 
@@ -534,6 +536,7 @@ class LINKFORGE_OT_add_empty_link(Operator):
     bl_description = "Create a new empty link frame at the 3D cursor position"
     bl_options = {"REGISTER", "UNDO"}
 
+    @safe_execute
     def execute(self, context: Context):
         """Execute the operator."""
         from ..preferences import get_addon_prefs
@@ -611,6 +614,7 @@ class LINKFORGE_OT_create_link_from_mesh(Operator):
 
         return True
 
+    @safe_execute
     def execute(self, context: Context):
         """Execute the operator."""
         mesh_obj = context.active_object
@@ -734,6 +738,7 @@ class LINKFORGE_OT_generate_collision(Operator):
 
         return False
 
+    @safe_execute
     def execute(self, context: Context):
         """Execute the operator."""
         obj = context.active_object
@@ -781,6 +786,7 @@ class LINKFORGE_OT_generate_collision_all(Operator):
     bl_description = "Generate collision geometry for all robot links in the scene"
     bl_options = {"REGISTER", "UNDO"}
 
+    @safe_execute
     def execute(self, context: Context):
         """Execute the operator."""
         count = 0
@@ -847,6 +853,7 @@ class LINKFORGE_OT_toggle_collision_visibility(Operator):
 
         return False
 
+    @safe_execute
     def execute(self, context: Context):
         """Execute the operator."""
         obj = context.active_object
@@ -898,20 +905,24 @@ class LINKFORGE_OT_calculate_inertia(Operator):
 
         return obj.linkforge.is_robot_link
 
+    @safe_execute
     def execute(self, context: Context):
         """Execute the operator."""
         obj = context.active_object
 
-        # If selected object is a visual/collision child, use parent link
+        # Resolve target link
+        link_obj = obj
         if obj.parent and hasattr(obj.parent, "linkforge"):
-            if obj.parent.linkforge.is_robot_link and not obj.linkforge.is_robot_link:
-                obj = obj.parent
+            if obj.parent.linkforge.is_robot_link:
+                link_obj = obj.parent
 
-        if calculate_inertia_for_link(obj):
-            self.report({"INFO"}, f"Calculated inertia for '{obj.name}'")
+        success = calculate_inertia_for_link(link_obj)
+
+        if success:
+            self.report({"INFO"}, f"Calculated inertia for '{link_obj.linkforge.link_name}'")
             return {"FINISHED"}
         else:
-            self.report({"ERROR"}, "Failed to calculate inertia")
+            self.report({"WARNING"}, "Failed to calculate inertia (check geometry/mass)")
             return {"CANCELLED"}
 
 
@@ -923,6 +934,7 @@ class LINKFORGE_OT_calculate_inertia_all(Operator):
     bl_description = "Auto-calculate inertia tensor for all robot links in the scene"
     bl_options = {"REGISTER", "UNDO"}
 
+    @safe_execute
     def execute(self, context: Context):
         """Execute the operator."""
         count = 0
@@ -1074,6 +1086,7 @@ class LINKFORGE_OT_add_material_slot(Operator):
 
         return False
 
+    @safe_execute
     def execute(self, context):
         """Execute the operator."""
         obj = context.active_object

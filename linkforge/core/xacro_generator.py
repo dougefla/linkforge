@@ -31,6 +31,11 @@ from .models.link import Link, Visual
 from .models.material import Material
 from .models.robot import Robot
 from .urdf_generator import URDFGenerator, format_float, format_vector
+from .utils.string_utils import sanitize_name
+
+# XACRO Namespace URI
+XACRO_URI = "http://www.ros.org/wiki/xacro"
+XACRO_NS = f"{{{XACRO_URI}}}"
 
 
 class XACROGenerator(URDFGenerator):
@@ -88,18 +93,22 @@ class XACROGenerator(URDFGenerator):
         self.generated_macros: list[dict[str, Any]] = []
 
     def generate(self, robot: Robot, validate: bool = True) -> str:
-        """Generate XACRO XML string from robot.
+        """Generate XACRO XML string from robot."""
+        root = self.generate_robot_element(robot, validate=validate)
+        return self._element_to_string(root)
+
+    def generate_robot_element(self, robot: Robot, validate: bool = True) -> ET.Element:
+        """Generate XACRO XML Element tree from robot.
+
+        This is used internally by generate() and for multi-file exports
+        to preserve structural comments and metadata.
 
         Args:
-            robot: Robot model
+            robot: Robot model to convert
             validate: Whether to validate robot structure before generation
 
         Returns:
-            XACRO XML as string
-
-        Raises:
-            ValueError: If robot validation fails (and validate is True)
-
+            XACRO XML Element tree
         """
         # Validate robot structure
         if validate:
@@ -114,7 +123,6 @@ class XACROGenerator(URDFGenerator):
 
         # Create root element
         root = ET.Element("robot", name=robot.name)
-        root.set("xmlns:xacro", "http://www.ros.org/wiki/xacro")
 
         # 1. Collect properties (Materials & Dimensions)
         properties: list[tuple[str, str]] = []
@@ -140,7 +148,7 @@ class XACROGenerator(URDFGenerator):
         if properties:
             root.append(ET.Comment(" Properties "))
         for prop_name, prop_value in properties:
-            ET.SubElement(root, "xacro:property", name=prop_name, value=str(prop_value))
+            ET.SubElement(root, f"{XACRO_NS}property", name=prop_name, value=str(prop_value))
 
         # Collect global materials (always needed for proper XACRO structure)
         self.global_materials = self._collect_materials(robot)
@@ -240,16 +248,22 @@ class XACROGenerator(URDFGenerator):
         for sensor in robot.sensors:
             self._add_sensor_element(root, sensor)
 
-        return self._element_to_string(root)
+        return root
 
     def _extract_materials(self, robot: Robot, properties: list[tuple[str, str]]) -> None:
-        """Extract unique materials as properties."""
+        """Extract unique materials as XACRO properties.
+
+        Args:
+            robot: Robot model to scan for materials
+            properties: List to append (name, value) tuples to
+        """
         materials = self._collect_materials(robot)
         for mat_name, mat in materials.items():
             # Skip materials without color (should not happen, but type-safe)
             if mat.color is None:
                 continue
-            prop_name = mat_name.lower().replace(" ", "_")
+            # Sanitize property name for XACRO (Python identifier: no hyphens, no leading digits)
+            prop_name = sanitize_name(mat_name.lower(), allow_hyphen=False)
             prop_value = (
                 f"{format_float(mat.color.r)} {format_float(mat.color.g)} "
                 f"{format_float(mat.color.b)} {format_float(mat.color.a)}"
@@ -360,13 +374,15 @@ class XACROGenerator(URDFGenerator):
 
         readable_dim = dim_map.get(dim_key, dim_key)
 
-        # Generate property name
+        # Sanitize for XACRO property (must be valid Python identifier)
         if common_prefix:
-            return f"{common_prefix}_{readable_dim}"
+            prop_name = f"{common_prefix}_{readable_dim}"
         else:
             # No common prefix, use dimension type
             geom_type = dim_key.split("_")[0]  # "cylinder", "box", "sphere"
-            return f"{geom_type}_{readable_dim}"
+            prop_name = f"{geom_type}_{readable_dim}"
+
+        return sanitize_name(prop_name, allow_hyphen=False)
 
     def _find_common_prefix(self, names: list[str]) -> str:
         """Find common prefix in a list of names.
@@ -521,14 +537,20 @@ class XACROGenerator(URDFGenerator):
     def _generate_macro_definition(
         self, root: ET.Element, signature: str, group: list[tuple[Link, Joint | None]]
     ) -> None:
-        """Generate <xacro:macro> definition."""
+        """Generate <xacro:macro> definition.
+
+        Args:
+            root: Root XML element to append definition to
+            signature: Geometry signature for this macro
+            group: List of (link, joint) tuples that share this macro
+        """
         template_link, template_joint = group[0]
         if not template_joint:
             return
 
         macro_name = self._get_macro_name(signature)
 
-        macro_elem = ET.SubElement(root, "xacro:macro")
+        macro_elem = ET.SubElement(root, f"{XACRO_NS}macro")
         macro_elem.set("name", macro_name)
         macro_elem.set("params", "name parent xyz rpy")
 
@@ -589,7 +611,14 @@ class XACROGenerator(URDFGenerator):
     def _generate_macro_call(
         self, root: ET.Element, signature: str, link: Link, joint: Joint | None
     ) -> None:
-        """Generate <xacro:call ... />."""
+        """Generate <xacro:call ... /> for a link/joint pair.
+
+        Args:
+            root: Parent XML element to append call to
+            signature: Geometry signature for the macro to call
+            link: Link instance to parameterize the call
+            joint: Joint instance providing origin data
+        """
         if not joint:
             return
 
@@ -599,14 +628,19 @@ class XACROGenerator(URDFGenerator):
         xyz = format_vector(origin.xyz.x, origin.xyz.y, origin.xyz.z)
         rpy = format_vector(origin.rpy.x, origin.rpy.y, origin.rpy.z)
 
-        call_elem = ET.SubElement(root, f"xacro:{macro_name}")
+        call_elem = ET.SubElement(root, f"{XACRO_NS}{macro_name}")
         call_elem.set("name", link.name)
         call_elem.set("parent", joint.parent)
         call_elem.set("xyz", xyz)
         call_elem.set("rpy", rpy)
 
     def _add_visual_element(self, parent: ET.Element, visual: Visual) -> None:
-        """Add visual element to parent."""
+        """Add visual element to parent with XACRO property support.
+
+        Args:
+            parent: Parent XML element
+            visual: Visual component to add
+        """
         visual_elem = ET.SubElement(parent, "visual")
 
         if visual.name:
@@ -636,7 +670,12 @@ class XACROGenerator(URDFGenerator):
 
     # Override _add_material_element to use properties
     def _add_material_element(self, parent: ET.Element, material: Material) -> None:
-        """Add material element, using property if available."""
+        """Add material element, using property reference if available.
+
+        Args:
+            parent: Parent XML element
+            material: Material instance to add
+        """
         mat_elem = ET.SubElement(parent, "material", name=material.name)
 
         if self.extract_materials and material.name in self.material_properties:
@@ -732,10 +771,15 @@ class XACROGenerator(URDFGenerator):
             filepath.write_text(xacro_string, encoding="utf-8")
 
     def _write_split_files(self, robot: Robot, main_filepath: Path, validate: bool = True) -> None:
-        """Write robot to multiple XACRO files."""
-        # Generate full XACRO first
-        full_xacro = self.generate(robot, validate=validate)
-        root = ET.fromstring(full_xacro)
+        """Write robot to multiple XACRO files (main, properties, macros).
+
+        Args:
+            robot: Robot model to export
+            main_filepath: Path to the main .xacro file
+            validate: Whether to validate robot structure before generation
+        """
+        # Build the full element tree directly (preserves comments)
+        root = self.generate_robot_element(robot, validate=validate)
 
         # Create separate files
         base_dir = main_filepath.parent
@@ -744,19 +788,20 @@ class XACROGenerator(URDFGenerator):
 
         # Extract top-level properties (materials, dimensions, etc.)
         properties_root = ET.Element("robot")
+        if any(root.findall(f"{XACRO_NS}property")):
+            properties_root.append(ET.Comment(" Properties "))
 
         # Extract properties
-        for prop in list(
-            root.findall("xacro:property", {"xacro": "http://www.ros.org/wiki/xacro"})
-        ):
+        for prop in list(root.findall(f"{XACRO_NS}property")):
             properties_root.append(prop)
             root.remove(prop)
 
         # Extract macros (top-level)
         macros_root = ET.Element("robot")
-        for macro_elem in list(
-            root.findall("xacro:macro", {"xacro": "http://www.ros.org/wiki/xacro"})
-        ):
+        if any(root.findall(f"{XACRO_NS}macro")):
+            macros_root.append(ET.Comment(" Macros "))
+
+        for macro_elem in list(root.findall(f"{XACRO_NS}macro")):
             macros_root.append(macro_elem)
             root.remove(macro_elem)
 
@@ -764,19 +809,28 @@ class XACROGenerator(URDFGenerator):
         main_root = ET.Element("robot")
         main_root.set("name", root.get("name", robot.name))
 
-        # Add includes at the top
-        if len(properties_root) > 0:
-            include_props = ET.Element("xacro:include")
+        # Add includes at the top with comments
+        if len(properties_root) > 1:  # Comment + at least one property
+            main_root.append(ET.Comment(" Properties "))
+            include_props = ET.Element(f"{XACRO_NS}include")
             include_props.set("filename", f"{robot_name}_properties.xacro")
-            main_root.insert(0, include_props)
+            main_root.append(include_props)
 
-        if len(macros_root) > 0:
-            include_mac = ET.Element("xacro:include")
+        if len(macros_root) > 1:  # Comment + at least one macro
+            main_root.append(ET.Comment(" Macros "))
+            include_mac = ET.Element(f"{XACRO_NS}include")
             include_mac.set("filename", f"{robot_name}_macros.xacro")
-            main_root.insert(1 if len(properties_root) > 0 else 0, include_mac)
+            main_root.append(include_mac)
 
-        # Copy remaining content
-        for child in root:
+        # Clean up remaining comments in root that are no longer relevant
+        # (e.g. if we moved all properties, remove the "Properties" comment)
+        for child in list(root):
+            if isinstance(child, ET.Element) and child.tag is ET.Comment:
+                if child.text.strip() in ("Properties", "Macros"):
+                    root.remove(child)
+
+        # Copy remaining content (Links, Joints, etc.)
+        for child in list(root):
             main_root.append(child)
 
         # Write files
@@ -793,7 +847,7 @@ class XACROGenerator(URDFGenerator):
     def _element_to_string(self, element: ET.Element) -> str:
         """Convert XML element to string with pretty printing."""
         # Ensure xacro namespace uses the 'xacro' prefix
-        ET.register_namespace("xacro", "http://www.ros.org/wiki/xacro")
+        ET.register_namespace("xacro", XACRO_URI)
 
         if self.pretty_print:
             # Use ET.indent for clean formatting (Python 3.9+)
