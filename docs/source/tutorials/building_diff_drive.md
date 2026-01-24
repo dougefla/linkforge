@@ -89,24 +89,30 @@ Always keep LinkForge's **Auto-Calculate Inertia** checkbox enabled rather than 
 
 ## Step 5: Configure Control
 
-To make our robot actuable in ROS 2 or Gazebo, we need to add transmissions to the joints we want to control (the wheels).
+To make our robot actuable in ROS 2 or Gazebo, we need to add standard interfaces (Velocity) to the wheels.
 
-1. **Select Left Wheel Joint**:
-   - Note: In LinkForge, transmissions are attached to joints.
-   - Select the `left_wheel_joint` (the Empty object representing the joint).
-2. **Add Transmission**:
+1. **Open Control Dashboard**:
    - Go to the **Control** panel in the LinkForge sidebar.
-   - Click **Create Transmission**.
-3. **Configure Interface**:
-   - Set **Hardware Interface** to `Velocity` (standard for mobile robot wheels).
-4. **Repeat for Right Wheel**: Connect a `Velocity` interface to the `right_wheel_joint`.
+   - Check **Use ROS2 Control**.
+   - This enables the centralized dashboard.
 
-![Configuring Transmissions](../_static/screenshots/diff_drive_05_control.png)
+2. **Add Interfaces**:
+   - Click the **Add (+)** button next to the "Joint Interfaces" list.
+   - Select `left_wheel_joint`.
+   - Click **Add (+)** again and select `right_wheel_joint`.
+
+3. **Configure Velocity Control**:
+   - Select `left_wheel_joint` in the list.
+   - Check **Velocity** under **Command Interfaces**.
+   - Check **Position** and **Velocity** under **State Interfaces** (standard for feedback).
+   - Repeat this configuration for `right_wheel_joint`.
+
+![Configuring Control Dashboard](../_static/screenshots/diff_drive_05_control.png)
 
 ## Step 6: Validate and Export
 
 1. **Validate**: In the **Validate & Export** panel, click **Validate Robot**.
-   - LinkForge will check if all links are connected, if physics data is valid, if collision geometry exists, and if transmissions are correctly set up.
+   - LinkForge will check if all links are connected, physics data is valid, and control interfaces are set.
 
 ::: {admonition} Warning
 :class: warning
@@ -129,7 +135,7 @@ You now have a production-ready, actuable URDF file. You can now load this file 
 
 ### 📄 Sample URDF Output
 
-If you followed the steps correctly, your exported URDF should look similar to the following. You can use this as a reference to verify your names, origins, and transmission configurations.
+If you followed the steps correctly, your exported URDF should look similar to the following. Note the clean `ros2_control` block and absence of legacy transmission tags.
 
 ```{dropdown} Click to view diff_drive_robot.urdf
 ```xml
@@ -214,27 +220,6 @@ If you followed the steps correctly, your exported URDF should look similar to t
     <parent link="base_link" />
     <child link="lidar_link" />
   </joint>
-  <!-- Transmissions -->
-  <transmission name="right_wheel_transmission">
-    <type>transmission_interface/SimpleTransmission</type>
-    <joint name="right_wheel_joint">
-      <hardwareInterface>velocity</hardwareInterface>
-    </joint>
-    <actuator name="right_wheel_joint_motor">
-      <hardwareInterface>velocity</hardwareInterface>
-      <mechanicalReduction>1</mechanicalReduction>
-    </actuator>
-  </transmission>
-  <transmission name="left_wheel_transmission">
-    <type>transmission_interface/SimpleTransmission</type>
-    <joint name="left_wheel_joint">
-      <hardwareInterface>velocity</hardwareInterface>
-    </joint>
-    <actuator name="left_wheel_joint_motor">
-      <hardwareInterface>velocity</hardwareInterface>
-      <mechanicalReduction>1</mechanicalReduction>
-    </actuator>
-  </transmission>
   <!-- ROS2 Control -->
   <ros2_control name="GazeboSimSystem" type="system">
     <hardware>
@@ -251,8 +236,9 @@ If you followed the steps correctly, your exported URDF should look similar to t
       <state_interface name="velocity" />
     </joint>
   </ros2_control>
+  <!-- Gazebo -->
   <gazebo>
-    <plugin filename="libgz_ros2_control-system.so" name="gz_ros2_control::GazeboSimROS2ControlPlugin">
+    <plugin name="gazebo_ros2_control" filename="libgz_ros2_control-system.so">
       <parameters>$(find robot_description)/config/controllers.yaml</parameters>
     </plugin>
   </gazebo>
@@ -262,6 +248,7 @@ If you followed the steps correctly, your exported URDF should look similar to t
       <always_on>true</always_on>
       <update_rate>30</update_rate>
       <visualize>false</visualize>
+      <topic>/lidar_link_sensor</topic>
       <ray>
         <scan>
           <horizontal>
