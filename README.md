@@ -136,7 +136,7 @@ uv sync
 uv run pytest
 
 # Run with coverage
-uv run pytest --cov=linkforge --cov-report=html
+uv run pytest --cov=linkforge_core --cov=platforms/blender/linkforge --cov-report=html
 ```
 
 ### Code Quality
@@ -148,7 +148,7 @@ uv run ruff format .
 uv run ruff check .
 
 # Type check
-uv run mypy linkforge
+uv run mypy core/src/linkforge_core platforms/blender/linkforge
 
 # Install all hooks (code quality and conventional commit messages)
 uv run pre-commit install --hook-type pre-commit --hook-type commit-msg
@@ -157,20 +157,10 @@ uv run pre-commit install --hook-type pre-commit --hook-type commit-msg
 ### Building & Distribution
 To package LinkForge as a Blender extension:
 ```bash
-# General build (automatic wheel bundling)
-python3 build_extension.py
-
-# Sync dependencies (update wheels for all platforms)
-python3 build_extension.py sync
+# Build the production-ready .zip
+python3 platforms/blender/scripts/build.py
 ```
 The package will be created in the `dist/` directory.
-
-### Managing Dependencies
-LinkForge uses a "Self-Contained" bundling strategy for wheels. To update or add new dependencies:
-1. Open `build_extension.py` and update the `DEP_CONFIG` dictionary.
-2. Run `python3 build_extension.py sync` to download wheels for Windows, Linux, and Mac (Python 3.10 & 3.11).
-
-
 
 ## 🎓 Learning Resources
 
@@ -185,7 +175,6 @@ LinkForge uses a "Self-Contained" bundling strategy for wheels. To update or add
 - [ ] **v1.3.0**: **High-Fidelity Expansion** (MJCF/MuJoCo & SDF/Gazebo support).
 - [ ] **v1.4.0**: **Mechanical Debugging** (Real-time IK & Collision Interference Validation).
 - [ ] **v2.0.0**: **Intelligence-Driven Rigging** (AI-assisted geometry analysis & Auto-Rigging).
-
 
 ## 🔭 Vision & Future
 For a deep dive into our long-term strategy, the **Digital Twin** philosophy, and our technical roadmap for AI and Kinematics, please read our [Project Vision](VISION.md).

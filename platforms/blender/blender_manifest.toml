@@ -1,0 +1,60 @@
+# Blender Extension Manifest for LinkForge
+# https://extensions.blender.org
+
+schema_version = "1.0.0"
+
+# Unique identifier (reverse domain notation recommended)
+id = "linkforge"
+
+# Version follows semantic versioning (MAJOR.MINOR.PATCH)
+version = "1.2.0"
+
+# Display name shown in Blender
+name = "LinkForge"
+
+# Short description (tagline) - max ~100 characters
+tagline = "Build Simulation-Ready Robots in Blender"
+
+# Extension type
+type = "add-on"
+
+# Maintainer information (required)
+maintainer = "Arouna Patouossa Mounchili"
+
+# Blender version compatibility
+blender_version_min = "4.2.0"
+
+# License in SPDX format (must be GPL-compatible for extensions.blender.org)
+# https://spdx.org/licenses/
+license = [
+    "SPDX:GPL-3.0-or-later",
+]
+
+# Copyright notice
+copyright = [
+    "2025 Arouna Patouossa Mounchili",
+]
+
+# Project website and documentation
+website = "https://github.com/arounamounchili/linkforge"
+
+# Tags for categorization on extensions.blender.org
+tags = [
+    "Import-Export",
+    "Rigging",
+    "Physics",
+    "Pipeline",
+]
+
+# Supported platforms
+platforms = [
+    "windows-x64",
+    "macos-arm64",
+    "macos-x64",
+    "linux-x64",
+]
+
+# Permissions required by the extension
+# https://docs.blender.org/manual/en/latest/advanced/extensions/addons.html#permissions
+[permissions]
+files = "Import/Export URDF/XACRO files"  # File system access for export

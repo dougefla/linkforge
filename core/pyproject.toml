@@ -1,0 +1,11 @@
+[project]
+name = "linkforge-core"
+version = "1.2.0"
+description = "Universal Robotics Interoperability Core"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = []
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

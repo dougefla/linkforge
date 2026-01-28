@@ -42,11 +42,6 @@ cd linkforge
 ```bash
 # Install all development dependencies
 uv sync
-
-# Activate virtual environment
-source .venv/bin/activate  # On macOS/Linux
-# or
-.venv\Scripts\activate  # On Windows
 ```
 
 ### 2. Install Pre-commit Hooks
@@ -63,39 +58,34 @@ uv run pre-commit install --hook-type pre-commit --hook-type commit-msg
 uv run pytest
 
 # Run linter
-uv run ruff check linkforge/
+uv run ruff check .
 
 # Build extension
-python3 build_extension.py
+uv run python platforms/blender/scripts/build.py
 ```
 
 ## Project Structure
 
 ```
 linkforge/
-├── linkforge/              # Main package
-│   ├── blender/           # Blender integration layer
-│   │   ├── operators/     # User actions (export, create, etc.)
-│   │   ├── panels/        # UI panels
-│   │   ├── properties/    # Blender scene properties
-│   │   ├── converters.py  # Bridge: Blender -> Core
-│   │   ├── urdf_importer.py # Bridge: Core -> Blender
-│   │   └── mesh_export.py # Mesh utilities
-│   └── core/              # Core logic (platform-independent)
-│       ├── models/        # Data structures (Robot, Link, Joint, etc.)
-│       ├── parsers/       # URDF/XACRO → Python objects
-│       ├── physics/       # Inertia calculations
-│       ├── validation/    # Validation & security
-│       ├── urdf_generator.py # Models -> URDF
-│       └── xacro_generator.py # Models -> XACRO
-├── tests/                 # Test suite
-│   ├── unit/              # Isolated tests
-│   │   ├── core/          # Model & math tests
-│   │   └── blender/       # Mocked Blender logic tests
-│   └── integration/      # System workflow and round-trip tests
+├── core/                  # Core Robotics Logic  (.pip package)
+│   └── src/
+│       └── linkforge_core/
+│           ├── models/    # Data structures
+│           ├── parsers/   # URDF/XACRO parsers
+│           └── ...
+├── platforms/
+│   └── blender/          # Blender Add-on (.zip extension)
+│       └── linkforge/
+│           ├── __init__.py
+│           ├── converters.py
+│           └── ...
+│       ├── scripts/      # Build tools
+│       │   └── build.py
+│       └── blender_manifest.toml
+├── tests/                # Workspace Test Suite
 ├── examples/             # Example URDF files
-├── docs/                 # Documentation
-└── build_extension.py    # Extension builder script
+└── pyproject.toml        # Workspace config
 ```
 
 See [ARCHITECTURE](https://linkforge.readthedocs.io/en/latest/explanation/ARCHITECTURE.html) for detailed architecture diagrams.
@@ -134,20 +124,20 @@ git checkout -b feature/your-feature-name
 uv run pytest
 
 # Run linter and auto-fix issues
-uv run ruff check linkforge/ --fix
+uv run ruff check . --fix
 
 # Format code
-uv run ruff format linkforge/
+uv run ruff format .
 
 # Type checking (optional but recommended)
-uv run mypy linkforge/core/
+uv run mypy core/src/linkforge_core platforms/blender/linkforge
 ```
 
 ### 4. Test in Blender
 
 ```bash
 # Build extension
-python3 build_extension.py
+python3 platforms/blender/scripts/build.py
 
 # Install in Blender:
 # 1. Open Blender
@@ -184,7 +174,7 @@ uv run pytest
 uv run pytest tests/unit/core/test_robot.py
 
 # Run with coverage
-uv run pytest --cov=linkforge --cov-report=html
+uv run pytest --cov=linkforge_core --cov=platforms/blender/linkforge --cov-report=html
 
 # Run only fast tests (skip integration)
 uv run pytest tests/unit/
