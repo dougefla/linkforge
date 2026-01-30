@@ -19,6 +19,7 @@ high-fidelity round-tripping and includes:
 from __future__ import annotations
 
 import xml.etree.ElementTree as ET
+from contextlib import suppress
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -183,7 +184,7 @@ def parse_geometry(
                 if urdf_directory is not None and not mesh_path.is_absolute():
                     # Validate that mesh path doesn't escape URDF directory
                     try:
-                        validate_mesh_path(mesh_path, urdf_directory)
+                        mesh_path = validate_mesh_path(mesh_path, urdf_directory)
                     except ValueError as e:
                         # Re-raise with more context
                         raise ValueError(f"Mesh path validation failed: {e}") from e
@@ -193,7 +194,7 @@ def parse_geometry(
                 if urdf_directory is not None:
                     # Validate that mesh path doesn't escape URDF directory
                     try:
-                        validate_mesh_path(mesh_path, urdf_directory)
+                        mesh_path = validate_mesh_path(mesh_path, urdf_directory)
                     except ValueError as e:
                         # Re-raise with more context
                         raise ValueError(f"Mesh path validation failed: {e}") from e
@@ -589,16 +590,16 @@ def parse_ros2_control(rc_elem: ET.Element) -> Ros2Control:
         command_interfaces = []
         for cmd_elem in joint_elem.findall("command_interface"):
             iface_name = cmd_elem.get("name", "position")
-            command_interfaces.append(iface_name)
+            command_interfaces.append(_normalize_hardware_interface(iface_name))
 
         # Parse state interfaces
         state_interfaces = []
         for state_elem in joint_elem.findall("state_interface"):
             iface_name = state_elem.get("name", "position")
-            state_interfaces.append(iface_name)
+            state_interfaces.append(_normalize_hardware_interface(iface_name))
 
-        # Only add joint if it has at least one command and state interface
-        if command_interfaces and state_interfaces:
+        # Only add joint if it has at least one command OR state interface
+        if command_interfaces or state_interfaces:
             joints.append(
                 Ros2ControlJoint(
                     name=joint_name,
@@ -996,6 +997,7 @@ def parse_gazebo_element(gazebo_elem: ET.Element) -> GazeboElement:
             child.tag
             not in [
                 "plugin",
+                "sensor",
                 "material",
                 "selfCollide",
                 "static",
@@ -1008,6 +1010,9 @@ def parse_gazebo_element(gazebo_elem: ET.Element) -> GazeboElement:
                 "kd",
                 "stopCfm",
                 "stopErp",
+                "minDepth",
+                "maxVel",
+                "fdir1",
             ]
             and child.text
         ):
@@ -1101,8 +1106,19 @@ def _detect_xacro_file(root: ET.Element, filepath: Path) -> None:
 class URDFParser(RobotParser):
     """Refined URDF Parser using a class-based interface."""
 
+    def __init__(self, max_file_size: int = MAX_FILE_SIZE) -> None:
+        """Initialize parser.
+
+        Args:
+            max_file_size: Maximum allowed file size in bytes (default: 100MB)
+        """
+        self.max_file_size = max_file_size
+
     def parse(self, filepath: Path, **kwargs: Any) -> Robot:
-        """Parse URDF file into a Robot model.
+        """Parse URDF file into a Robot model using iterative parsing.
+
+        This implementation uses iterparse to maintain O(1) memory complexity
+        even for massive URDF files.
 
         Args:
             filepath: Path to the input file
@@ -1126,12 +1142,72 @@ class URDFParser(RobotParser):
             )
 
         try:
-            with open(filepath, encoding="utf-8") as f:
-                urdf_string = f.read()
-        except Exception as e:
-            raise RobotParserError(f"Failed to read file {filepath}: {e}") from e
+            # We use iterparse to process elements as they are closed
+            context = ET.iterparse(str(filepath), events=("start", "end"))
+            event, root = next(context)  # Get the root element (start of <robot>)
 
-        return self.parse_string(urdf_string, urdf_directory=filepath.parent, **kwargs)
+            if root.tag != "robot":
+                raise ValueError(f"Root element must be <robot>, found <{root.tag}>")
+
+            if filepath:
+                _detect_xacro_file(root, filepath)
+
+            robot = Robot(name=root.get("name", "unnamed_robot"))
+            materials: dict[str, Material] = {}
+            depth = 0
+
+            for event, elem in context:
+                if event == "start":
+                    depth += 1
+                elif event == "end":
+                    if depth == 1:
+                        # Direct children of <robot>
+                        if elem.tag == "material":
+                            mat = parse_material(elem, materials)
+                            if mat:
+                                materials[mat.name] = mat
+
+                        elif elem.tag == "link":
+                            link = parse_link(elem, materials, filepath.parent)
+                            with suppress(ValueError):
+                                robot.add_link(link)
+
+                        elif elem.tag == "joint":
+                            joint = parse_joint(elem)
+                            try:
+                                robot.add_joint(joint)
+                            except ValueError as e:
+                                logger.warning(f"Skipping invalid joint '{joint.name}': {e}")
+
+                        elif elem.tag == "transmission":
+                            transmission = parse_transmission(elem)
+                            robot.transmissions.append(transmission)
+
+                        elif elem.tag == "ros2_control":
+                            ros2_control = parse_ros2_control(elem)
+                            robot.ros2_controls.append(ros2_control)
+
+                        elif elem.tag == "gazebo":
+                            sensor = parse_sensor_from_gazebo(elem)
+                            if sensor:
+                                robot.sensors.append(sensor)
+                            else:
+                                gazebo_element = parse_gazebo_element(elem)
+                                robot.gazebo_elements.append(gazebo_element)
+
+                        # CRITICAL: Clear the element from root to save memory
+                        root.clear()
+
+                    depth -= 1
+
+            return robot
+
+        except ET.ParseError as e:
+            raise RobotParserError(f"Failed to parse URDF XML: {e}") from e
+        except Exception as e:
+            if isinstance(e, RobotParserError):
+                raise
+            raise RobotParserError(f"Unexpected error parsing URDF: {e}") from e
 
     def parse_string(
         self, urdf_string: str, urdf_directory: Path | None = None, **kwargs: Any
@@ -1148,10 +1224,10 @@ class URDFParser(RobotParser):
         """
         # Check string size to prevent DoS
         string_size = len(urdf_string.encode("utf-8"))
-        if string_size > MAX_FILE_SIZE:
+        if string_size > self.max_file_size:
             raise RobotParserError(
                 f"URDF string too large: {string_size / (1024 * 1024):.1f} MB "
-                f"(maximum {MAX_FILE_SIZE / (1024 * 1024):.1f} MB)."
+                f"(maximum {self.max_file_size / (1024 * 1024):.1f} MB)."
             )
 
         try:

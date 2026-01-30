@@ -111,11 +111,6 @@ class RobotPropertyGroup(PropertyGroup):
                 "STereoLithography without materials - for simple geometry or 3D printing",
             ),
             (
-                "DAE",
-                "DAE",
-                "COLLADA (Legacy) - Materials and animations. Unsupported in Blender 5.0+",
-            ),
-            (
                 "GLB",
                 "glTF Binary (.glb)",
                 "Modern, efficient standard - best for web/Foxglove/Isaac Sim",
@@ -190,6 +185,25 @@ class RobotPropertyGroup(PropertyGroup):
         description="Show/Hide all collision meshes in the viewport",
         default=False,
         update=update_collision_visibility,
+    )
+
+    # Background Import State (Pro UX)
+    is_importing: BoolProperty(  # type: ignore
+        name="Is Importing",
+        description="True if a background import is currently active",
+        default=False,
+    )
+
+    abort_import: BoolProperty(  # type: ignore
+        name="Abort Import",
+        description="Request cancellation of the current background import",
+        default=False,
+    )
+
+    import_status: StringProperty(  # type: ignore
+        name="Import Status",
+        description="Current status message from the background importer",
+        default="",
     )
 
 

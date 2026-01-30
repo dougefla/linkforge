@@ -250,7 +250,7 @@ classDiagram
     Robot "1" *-- "many" Link
     Robot "1" *-- "many" Joint
     Robot "1" *-- "many" Sensor
-    Robot "1" o-- "many" Transmission : legacy
+    Robot "1" o-- "many" Transmission : legacy (manual only)
     Link "1" *-- "many" Visual
     Link "1" *-- "many" Collision
     Link "1" *-- "1" Inertial
@@ -381,7 +381,7 @@ class Robot:
 graph TB
     subgraph "Test Pyramid"
         Integration[Integration Tests<br/>System Workflows]
-        Blender[Blender Unit Tests<br/>Mocked API]
+        Blender[Blender Unit Tests<br/>Real Headless API]
         Core[Core Unit Tests<br/>Pure Logic]
     end
 
@@ -395,8 +395,11 @@ graph TB
 
 ### Test Categories
 - **Unit Tests (Core)**: Isolated tests for platform-independent data models and math.
-- **Unit Tests (Blender)**: Isolated tests for Blender-specific logic using mocks.
-- **Integration Tests**: Full workflow validation, multi-file parsing, and end-to-end round-trips.
+- **Unit Tests (Blender)**: Tests for Blender-specific logic running in a real headless Blender environment.
+- **Integration Tests**: Full workflow validation organized into specialized subdirectories:
+  - `parsers/`: URDF/Xacro parsing logic and complex includes.
+  - `blender/`: End-to-end Roundtrip (Import → Scene Setup → Export).
+  - `features/`: Specific functionality like Inertia, Transmissions, and Sensors.
 
 ## Security Architecture
 
@@ -428,5 +431,5 @@ LinkForge distinguishes between user-created assets and imported "Source of Trut
 
 ---
 
-**Last Updated:** 2026-01-24
-**Version:** 1.2.0
+**Last Updated:** 2026-01-30
+**Version:** 1.2.0 (Architectural Stability & Precision)

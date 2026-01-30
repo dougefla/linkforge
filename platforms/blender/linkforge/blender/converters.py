@@ -76,7 +76,7 @@ def matrix_to_transform(matrix: Any) -> Transform:
         matrix: Blender mathutils.Matrix (4x4)
 
     Returns:
-        Core Transform with XYZ position and RPY rotation
+        Core Transform with XYZ position and RPY rotation.
 
     """
     if matrix is None or Matrix is None:
@@ -268,7 +268,7 @@ def get_object_geometry(
         link_name: Name of the link (for mesh filename)
         geom_purpose: "visual" or "collision" (for mesh filename)
         meshes_dir: Directory to export mesh files to
-        mesh_format: "STL" or "DAE"
+        mesh_format: "STL", "OBJ", or "GLB"
         simplify: Whether to simplify mesh (for collision)
         decimation_ratio: Simplification ratio if simplify=True
 
@@ -1110,6 +1110,8 @@ def blender_sensor_to_core(obj: Any) -> Sensor | None:
         link_name=link_name,
         origin=origin,
         update_rate=props.update_rate,
+        always_on=props.always_on,
+        visualize=props.visualize,
         camera_info=camera_info,
         lidar_info=lidar_info,
         imu_info=imu_info,

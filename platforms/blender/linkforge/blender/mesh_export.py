@@ -1,6 +1,6 @@
 """Mesh export utilities for LinkForge.
 
-Export Blender mesh objects to STL, OBJ, and DAE files for URDF.
+Export Blender mesh objects to STL, OBJ, and GLB files for URDF.
 """
 
 from __future__ import annotations
@@ -102,74 +102,6 @@ def export_mesh_obj(obj: Any, filepath: Path) -> bool:
         raise
 
 
-def is_dae_supported() -> bool:
-    """Check if COLLADA (DAE) export is supported in the current environment.
-
-    Blender 5.0+ has removed built-in COLLADA support. For older versions,
-    support depends on whether the Collada operator is available.
-
-    Returns:
-        True if the exporter is available, False otherwise.
-
-    """
-    if bpy.app.version >= (5, 0, 0) or not hasattr(bpy.ops.wm, "collada_export"):
-        msg = (
-            "COLLADA (DAE) support was removed in Blender 5.0. "
-            "Please use glTF (.glb) for textured visual meshes."
-        )
-        logger.error(msg)
-        return False
-
-    return True
-
-
-def export_mesh_dae(obj: Any, filepath: Path) -> bool:
-    """Export Blender object to DAE (COLLADA) file.
-
-    Args:
-        obj: Blender Object to export
-        filepath: Path where DAE file should be saved
-
-    Returns:
-        True if export succeeded, False otherwise
-
-    """
-    if obj is None:
-        return False
-
-    # Check for DAE support (Version-aware and hack-free)
-    if not is_dae_supported():
-        return False
-
-    # Ensure parent directory exists
-    filepath.parent.mkdir(parents=True, exist_ok=True)
-
-    # Deselect all and select only target object
-    bpy.ops.object.select_all(action="DESELECT")
-    obj.select_set(True)
-    bpy.context.view_layer.objects.active = obj
-
-    # Export to COLLADA (DAE)
-    try:
-        bpy.ops.wm.collada_export(
-            filepath=str(filepath),
-            selected=True,
-            apply_modifiers=True,
-            export_mesh_type_selection="view",
-            triangulate=True,
-        )
-        return True
-    except (RuntimeError, OSError) as e:
-        logger.warning(f"DAE export failed: {e}")
-        return False
-    except (TypeError, AttributeError, KeyError) as e:
-        logger.error(f"Unexpected error during DAE export: {e}", exc_info=True)
-        return False
-    except Exception as e:
-        logger.critical(f"Critical unexpected error during DAE export: {e}", exc_info=True)
-        raise
-
-
 def create_simplified_mesh(obj: Any, decimation_ratio: float) -> Any | None:
     """Create a simplified copy of mesh using decimation.
 
@@ -216,10 +148,10 @@ def get_mesh_filename(link_name: str, geometry_type: str, mesh_format: str) -> s
     Args:
         link_name: Name of the robot link
         geometry_type: "visual" or "collision"
-        mesh_format: "STL" or "DAE"
+        mesh_format: "STL", "OBJ", or "GLB"
 
     Returns:
-        Filename string (e.g., "base_link_visual.stl")
+        Filename string (e.g., "base_link_visual.stl").
 
     """
     ext = mesh_format.lower()
@@ -290,7 +222,7 @@ def export_link_mesh(
         obj: Blender Object to export
         link_name: Name of the robot link
         geometry_type: "visual" or "collision"
-        mesh_format: "STL" or "DAE"
+        mesh_format: "STL", "OBJ", or "GLB"
         meshes_dir: Directory where mesh files should be saved
         simplify: Whether to simplify mesh (for collision)
         decimation_ratio: Simplification ratio if simplify=True
@@ -366,8 +298,7 @@ def export_link_mesh(
         success = export_mesh_stl(export_obj, filepath)
     elif mesh_format.upper() == "OBJ":
         success = export_mesh_obj(export_obj, filepath)
-    elif mesh_format.upper() == "DAE":
-        success = export_mesh_dae(export_obj, filepath)
+
     elif mesh_format.upper() == "GLB":
         success = export_mesh_glb(export_obj, filepath)
     else:

@@ -176,6 +176,11 @@ uv run pytest tests/unit/core/test_robot.py
 # Run with coverage
 uv run pytest --cov=linkforge_core --cov=platforms/blender/linkforge --cov-report=html
 
+# Run specific test category
+uv run pytest tests/integration/blender/
+uv run pytest tests/integration/parsers/
+uv run pytest tests/integration/features/
+
 # Run only fast tests (skip integration)
 uv run pytest tests/unit/
 ```
@@ -229,7 +234,23 @@ def test_sensor_roundtrip():
 ```
 
 - **Unit Tests** (`tests/unit/`): Test individual functions/classes in isolation (Core or Blender).
-- **Integration Tests** (`tests/integration/`): Test full workflows and round-trips.
+- **Integration Tests** (`tests/integration/`): Test full workflows and round-trips organized into `parsers/`, `blender/`, and `features/`.
+
+> [!TIP]
+> **Use Central Fixtures**: Always use the `examples_dir` fixture from `tests/conftest.py` when accessing example URDFs. Avoid hardcoding relative paths like `../../examples`.
+
+### Testing Philosophy ("Real Data over Mocks")
+
+We prioritize testing with **real objects and environments** over mocking.
+
+1.  **Blender Tests**: Do **not** mock `bpy` or Blender data structures.
+    - Our test runner launches a real, headless Blender instance.
+    - Use `bpy.ops.object.empty_add()` to create real objects in your test fixtures.
+    - **Avoid**: `MagicMock`, partial mocks of `bpy.types`, or "dummy" property classes.
+
+2.  **Core Tests**: Use real data models.
+    - Instantiate real `Robot`, `Link`, or `Joint` objects.
+    - Do not mock internal helper functions unless strictly necessary (e.g., file system I/O for security tests).
 
 ## Code Style
 
@@ -427,11 +448,18 @@ logger.error(f"Debug: {variable}")
 
 ### Running Tests in Blender
 
+Since standard `pytest` cannot access Blender's internal API (`bpy`), we use a custom runner that launches a headless Blender process to execute your tests.
+
 ```bash
-# From Blender's Python console:
-import subprocess
-subprocess.run(["pytest", "tests/integration/"])
+# Run all Blender unit tests
+./run_blender_tests.py
+
+# If Blender is not in your standard Applications folder (MacOS) or PATH (Linux),
+# specify the path explicitly:
+BLENDER_PATH=/path/to/blender ./run_blender_tests.py
 ```
+
+These tests cover critical UI logic, operators, and LinkForge -> Blender data conversions.
 
 ## Technical Considerations
 

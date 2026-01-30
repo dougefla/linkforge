@@ -1,6 +1,8 @@
 """Test ros2_control parsing and round-trip fidelity."""
 
+import pytest
 from linkforge_core import URDFGenerator
+from linkforge_core.models.ros2_control import Ros2Control, Ros2ControlJoint
 from linkforge_core.parsers.urdf_parser import URDFParser
 
 
@@ -147,3 +149,118 @@ def test_ros2_control_multiple_joints():
     assert rc.joints[0].command_interfaces == ["position"]
     assert rc.joints[1].name == "joint2"
     assert rc.joints[1].command_interfaces == ["velocity"]
+
+
+class TestRos2ControlJointValidation:
+    """Tests for Ros2ControlJoint validation."""
+
+    def test_empty_joint_name(self):
+        """Test that empty joint name raises error."""
+        with pytest.raises(ValueError, match="Joint name cannot be empty"):
+            Ros2ControlJoint(
+                name="",
+                command_interfaces=["position"],
+                state_interfaces=["position"],
+            )
+
+    def test_missing_all_interfaces(self):
+        """Test that missing ALL interfaces raises error."""
+        with pytest.raises(ValueError, match="must have at least one command OR state interface"):
+            Ros2ControlJoint(
+                name="joint1",
+                command_interfaces=[],
+                state_interfaces=[],
+            )
+
+
+def test_ros2_control_normalization():
+    """Test that interface names are normalized (e.g. full ROS paths to short names)."""
+    urdf_string = """<?xml version="1.0"?>
+    <robot name="test">
+      <link name="base_link"/>
+      <ros2_control name="TestSystem" type="system">
+        <hardware>
+          <plugin>test_plugin</plugin>
+        </hardware>
+        <joint name="joint1">
+          <command_interface name="hardware_interface/PositionJointInterface"/>
+          <state_interface name="hardware_interface/VelocityJointInterface"/>
+        </joint>
+      </ros2_control>
+    </robot>
+    """
+    robot = URDFParser().parse_string(urdf_string)
+
+    rc = robot.ros2_controls[0]
+    assert rc.joints[0].command_interfaces == ["position"]
+    assert rc.joints[0].state_interfaces == ["velocity"]
+
+
+class TestRos2ControlValidation:
+    """Tests for Ros2Control validation."""
+
+    def test_empty_name(self):
+        """Test that empty ros2_control name raises error."""
+        with pytest.raises(ValueError, match="ros2_control name cannot be empty"):
+            Ros2Control(
+                name="",
+                hardware_plugin="test_plugin",
+            )
+
+    def test_invalid_type(self):
+        """Test that invalid ros2_control type raises error."""
+        with pytest.raises(ValueError, match="Invalid ros2_control type"):
+            Ros2Control(
+                name="TestSystem",
+                type="invalid_type",
+                hardware_plugin="test_plugin",
+            )
+
+    def test_empty_hardware_plugin(self):
+        """Test that empty hardware plugin raises error."""
+        with pytest.raises(ValueError, match="Hardware plugin cannot be empty"):
+            Ros2Control(
+                name="TestSystem",
+                type="system",
+                hardware_plugin="",
+            )
+
+
+def test_parse_ros2_control_readonly_joint():
+    """Test parsing a joint with ONLY state interfaces (should be valid)."""
+    xml = """
+    <robot name="test">
+        <ros2_control name="SensorSystem" type="system">
+            <hardware><plugin>mock</plugin></hardware>
+            <joint name="sensor_joint">
+                <state_interface name="position"/>
+            </joint>
+        </ros2_control>
+    </robot>
+    """
+    robot = URDFParser().parse_string(xml)
+    assert len(robot.ros2_controls) == 1
+    rc = robot.ros2_controls[0]
+    assert len(rc.joints) == 1
+    assert rc.joints[0].name == "sensor_joint"
+    assert rc.joints[0].state_interfaces == ["position"]
+
+
+def test_parse_ros2_control_writeonly_joint():
+    """Test parsing a joint with ONLY command interfaces (should be valid)."""
+    xml = """
+    <robot name="test">
+        <ros2_control name="ActuatorSystem" type="system">
+            <hardware><plugin>mock</plugin></hardware>
+            <joint name="actuator_joint">
+                <command_interface name="velocity"/>
+            </joint>
+        </ros2_control>
+    </robot>
+    """
+    robot = URDFParser().parse_string(xml)
+    assert len(robot.ros2_controls) == 1
+    rc = robot.ros2_controls[0]
+    assert len(rc.joints) == 1
+    assert rc.joints[0].name == "actuator_joint"
+    assert rc.joints[0].command_interfaces == ["velocity"]

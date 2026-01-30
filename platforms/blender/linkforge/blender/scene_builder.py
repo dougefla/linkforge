@@ -17,9 +17,29 @@ from ..linkforge_core.models import (
     Robot,
     Sphere,
 )
+from ..linkforge_core.utils.kinematics import sort_joints_topological
 from .preferences import get_addon_prefs
+from .utils.joint_utils import resolve_mimic_joints
+from .utils.scene_utils import move_to_collection
 
 logger = get_logger(__name__)
+
+
+def resolve_mesh_path(filepath: Path, urdf_dir: Path) -> Path:
+    """Resolve mesh path relative to URDF directory or as absolute path.
+
+    Args:
+        filepath: Original mesh filepath from URDF
+        urdf_dir: Directory containing the URDF file
+
+    Returns:
+        Resolved Path object
+    """
+    mesh_path = urdf_dir / filepath
+    if not mesh_path.exists():
+        # Try as absolute path
+        return Path(filepath)
+    return mesh_path
 
 
 def create_material_from_color(color: Color, name: str):
@@ -79,6 +99,7 @@ def create_primitive_mesh(geometry, name: str):
                 obj.name = name
                 obj.dimensions = (geometry.size.x, geometry.size.y, geometry.size.z)
                 obj["urdf_geometry_type"] = "BOX"
+                bpy.context.view_layer.update()
 
         elif isinstance(geometry, Cylinder):
             bpy.ops.mesh.primitive_cylinder_add(location=(0, 0, 0))
@@ -87,6 +108,7 @@ def create_primitive_mesh(geometry, name: str):
                 obj.name = name
                 obj.dimensions = (geometry.radius * 2, geometry.radius * 2, geometry.length)
                 obj["urdf_geometry_type"] = "CYLINDER"
+                bpy.context.view_layer.update()
 
         elif isinstance(geometry, Sphere):
             bpy.ops.mesh.primitive_uv_sphere_add(location=(0, 0, 0))
@@ -95,6 +117,7 @@ def create_primitive_mesh(geometry, name: str):
                 obj.name = name
                 obj.dimensions = (geometry.radius * 2, geometry.radius * 2, geometry.radius * 2)
                 obj["urdf_geometry_type"] = "SPHERE"
+                bpy.context.view_layer.update()
 
         else:
             return None
@@ -121,7 +144,10 @@ def import_mesh_file(mesh_path: Path, name: str):
 
     """
     if not mesh_path.exists():
+        logger.error(f"Mesh file not found: {mesh_path}")
         return None
+
+    logger.info(f"Importing mesh: {mesh_path} as '{name}'")
 
     # Deselect all
     bpy.ops.object.select_all(action="DESELECT")
@@ -129,92 +155,85 @@ def import_mesh_file(mesh_path: Path, name: str):
     # Import based on file extension
     ext = mesh_path.suffix.lower()
 
-    try:
-        if ext == ".obj":
-            bpy.ops.wm.obj_import(filepath=str(mesh_path))
-        elif ext == ".stl":
-            bpy.ops.wm.stl_import(filepath=str(mesh_path))
-        elif ext == ".dae":
-            # DAE might not be available in all Blender versions (Removed in 5.0)
-            if hasattr(bpy.ops.wm, "collada_import"):
-                bpy.ops.wm.collada_import(filepath=str(mesh_path))
-            else:
-                msg = (
-                    f"COLLADA (.dae) support was removed in Blender 5.0.\n"
-                    f"Failed to import mesh '{mesh_path.name}'.\n"
-                    "Please convert the mesh to .glb or .obj format."
-                )
-                logger.error(msg)
-                return None
-        elif ext in (".glb", ".gltf"):
-            # glTF support: Try modern first, then legacy, then check addon
-            imported = False
+    # Define operator candidates for each file extension
+    # We try them in order of preference (modern WM ops first, then legacy scene/mesh ops)
+    operators = {
+        ".obj": ["wm.obj_import", "import_scene.obj"],
+        ".stl": ["wm.stl_import", "import_mesh.stl"],
+        ".glb": ["wm.gltf_import", "import_scene.gltf"],
+        ".gltf": ["wm.gltf_import", "import_scene.gltf"],
+    }
 
-            # Attempt 1: Modern Blender 4.2+ (bpy.ops.wm.gltf_import)
-            if not imported:
-                try:
-                    bpy.ops.wm.gltf_import(filepath=str(mesh_path))
-                    imported = True
-                except (AttributeError, NameError):
-                    pass
-
-            # Attempt 2: Legacy Blender (bpy.ops.import_scene.gltf)
-            if not imported:
-                try:
-                    bpy.ops.import_scene.gltf(filepath=str(mesh_path))
-                    imported = True
-                except (AttributeError, NameError):
-                    pass
-
-            # Attempt 3: Enable Addon and Retry
-            if not imported:
-                import addon_utils
-
-                addon_name = "io_scene_gltf2"
-                is_enabled, _ = addon_utils.check(addon_name)
-
-                if not is_enabled:
-                    try:
-                        logger.info(f"Enabling {addon_name} addon...")
-                        addon_utils.enable(addon_name)
-
-                        # Retry Modern
-                        try:
-                            bpy.ops.wm.gltf_import(filepath=str(mesh_path))
-                            imported = True
-                        except (AttributeError, NameError):
-                            # Retry Legacy
-                            try:
-                                bpy.ops.import_scene.gltf(filepath=str(mesh_path))
-                                imported = True
-                            except (AttributeError, NameError):
-                                pass
-                    except Exception as e:
-                        logger.error(f"Failed to enable glTF addon: {e}")
-
-            if not imported:
-                logger.error(
-                    "glTF importer not found. Ensure 'Import-Export: glTF 2.0 format' addon is enabled."
-                )
-                return None
+    if ext not in operators:
+        if ext == ".dae":
+            logger.warning(
+                f"Skipping DAE import for '{mesh_path.name}'. "
+                "DAE is a legacy format. Please convert to glTF (.glb) or OBJ."
+            )
         else:
-            return None
+            logger.warning(f"Unsupported mesh file extension: {ext} for '{mesh_path.name}'")
+        return None
 
+    # Dispatcher: Try each operator until one succeeds
+    success = False
+    for op_name in operators[ext]:
+        try:
+            # Dynamically look up operator
+            op_parts = op_name.split(".")
+            op = bpy.ops
+            for part in op_parts:
+                op = getattr(op, part)
+
+            # Call the operator
+            op(filepath=str(mesh_path))
+            success = True
+            logger.debug(f"Successfully used importer: {op_name}")
+            break
+        except (AttributeError, RuntimeError) as e:
+            logger.debug(f"Importer '{op_name}' failed or not found: {e}")
+            continue
+
+    if not success:
+        logger.error(
+            f"No functional {ext.upper()} importer found for '{mesh_path.name}'. "
+            f"Blender version: {bpy.app.version_string}"
+        )
+        return None
+
+    try:
         # Get imported object (should be selected)
         imported_objects = list(bpy.context.selected_objects)
         if imported_objects:
             obj = imported_objects[0]
             obj.name = name
+            logger.debug(f"Successfully imported mesh: {obj.name}")
             return obj
 
+        logger.warning(f"Importer ran but no objects were found for '{mesh_path.name}'")
+        return None
+
     except (RuntimeError, OSError) as e:
-        logger.error(f"Failed to import mesh '{mesh_path.name}': {e}")
+        logger.error(f"Failed to process imported mesh '{mesh_path.name}': {e}")
         return None
     except Exception as e:
-        logger.critical(f"Unexpected error importing mesh '{mesh_path.name}': {e}", exc_info=True)
+        logger.critical(f"Unexpected error processing mesh '{mesh_path.name}': {e}", exc_info=True)
         raise
 
     return None
+
+
+def _get_geometry_type_str(geometry):
+    """Get geometry type string from geometry instance."""
+    geometry_type_map = {
+        Box: "BOX",
+        Cylinder: "CYLINDER",
+        Sphere: "SPHERE",
+        Mesh: "MESH",
+    }
+    for geom_class, type_str in geometry_type_map.items():
+        if isinstance(geometry, geom_class):
+            return type_str
+    return "MESH"  # Default fallback
 
 
 def create_link_object(link: Link, urdf_dir: Path, collection=None) -> object | None:
@@ -230,10 +249,10 @@ def create_link_object(link: Link, urdf_dir: Path, collection=None) -> object | 
 
     """
     # Create an Empty object to represent the link (always)
-    # Use PLAIN_AXES type with sizing from preferences
-    bpy.ops.object.empty_add(type="PLAIN_AXES", location=(0, 0, 0))
-    link_obj = bpy.context.active_object
-    link_obj.name = link.name
+    # Using bpy.data.objects.new is safer than bpy.ops in asynchronous/timer environments
+    link_obj = bpy.data.objects.new(link.name, None)
+    link_obj.empty_display_type = "PLAIN_AXES"
+    link_obj.location = (0, 0, 0)
 
     # Set display size from preferences
     prefs = get_addon_prefs()
@@ -241,11 +260,7 @@ def create_link_object(link: Link, urdf_dir: Path, collection=None) -> object | 
 
     # Add to collection
     if collection:
-        for coll in list(link_obj.users_collection):
-            if coll != collection:
-                coll.objects.unlink(link_obj)
-        if link_obj not in collection.objects[:]:
-            collection.objects.link(link_obj)
+        move_to_collection(link_obj, collection)
 
     # Set link properties on the main link object
     if hasattr(link_obj, "linkforge"):
@@ -267,12 +282,8 @@ def create_link_object(link: Link, urdf_dir: Path, collection=None) -> object | 
 
         # Create geometry
         if isinstance(visual.geometry, Mesh):
-            # Resolve mesh path relative to URDF directory
-            mesh_path = urdf_dir / visual.geometry.filepath
-            if not mesh_path.exists():
-                # Try as absolute path
-                mesh_path = visual.geometry.filepath
-
+            # Resolve mesh path
+            mesh_path = resolve_mesh_path(visual.geometry.filepath, urdf_dir)
             visual_obj = import_mesh_file(mesh_path, visual_name)
 
             # Apply scale from URDF
@@ -307,11 +318,7 @@ def create_link_object(link: Link, urdf_dir: Path, collection=None) -> object | 
 
             # Add visual mesh to collection
             if collection:
-                for coll in list(visual_obj.users_collection):
-                    if coll != collection:
-                        coll.objects.unlink(visual_obj)
-                if visual_obj not in collection.objects[:]:
-                    collection.objects.link(visual_obj)
+                move_to_collection(visual_obj, collection)
 
             # Apply material to visual mesh
             if visual.material and visual.material.color:
@@ -334,12 +341,8 @@ def create_link_object(link: Link, urdf_dir: Path, collection=None) -> object | 
 
         # Create geometry
         if isinstance(collision.geometry, Mesh):
-            # Resolve mesh path relative to URDF directory
-            mesh_path = urdf_dir / collision.geometry.filepath
-            if not mesh_path.exists():
-                # Try as absolute path
-                mesh_path = collision.geometry.filepath
-
+            # Resolve mesh path
+            mesh_path = resolve_mesh_path(collision.geometry.filepath, urdf_dir)
             collision_obj = import_mesh_file(mesh_path, collision_name)
 
             # Apply scale from URDF
@@ -379,11 +382,7 @@ def create_link_object(link: Link, urdf_dir: Path, collection=None) -> object | 
 
             # Add collision mesh to collection
             if collection:
-                for coll in list(collision_obj.users_collection):
-                    if coll != collection:
-                        coll.objects.unlink(collision_obj)
-                if collision_obj not in collection.objects[:]:
-                    collection.objects.link(collision_obj)
+                move_to_collection(collision_obj, collection)
 
             # Clear materials from collision mesh (collision doesn't need materials)
             # Materials may come from imported mesh files (OBJ, DAE, etc.)
@@ -437,20 +436,6 @@ def create_link_object(link: Link, urdf_dir: Path, collection=None) -> object | 
         props.mass = 0.0
         props.use_auto_inertia = False
 
-    # Helper to get geometry type string from instance
-    def _get_geometry_type_str(geometry):
-        """Get geometry type string from geometry instance."""
-        geometry_type_map = {
-            Box: "BOX",
-            Cylinder: "CYLINDER",
-            Sphere: "SPHERE",
-            Mesh: "MESH",
-        }
-        for geom_class, type_str in geometry_type_map.items():
-            if isinstance(geometry, geom_class):
-                return type_str
-        return "MESH"  # Default fallback
-
     # Set geometry types on link properties (use first element if multiple)
     if hasattr(link_obj, "linkforge"):
         props = link_obj.linkforge
@@ -496,12 +481,17 @@ def create_joint_object(joint: Joint, link_objects: dict, collection=None) -> ob
         empty_size = getattr(prefs, "joint_empty_size", empty_size)
 
     # Create Empty object (ARROWS shows RGB colored axes)
-    bpy.ops.object.empty_add(type="ARROWS", location=(0, 0, 0))
-    empty = bpy.context.active_object
-    empty.name = joint.name
-
-    # Set display size from preferences
+    # Using bpy.data.objects.new for context safety
+    empty = bpy.data.objects.new(joint.name, None)
+    empty.empty_display_type = "ARROWS"
     empty.empty_display_size = empty_size
+    empty.location = (0, 0, 0)
+
+    # Add to collection
+    if collection:
+        collection.objects.link(empty)
+    else:
+        bpy.context.scene.collection.objects.link(empty)
 
     # Set joint properties
     if hasattr(empty, "linkforge_joint"):
@@ -565,16 +555,14 @@ def create_joint_object(joint: Joint, link_objects: dict, collection=None) -> ob
             props.mimic_offset = joint.mimic.offset
 
     # Set up parent-child relationship in Blender
-    if joint.parent in link_objects and joint.child in link_objects:
-        parent_obj = link_objects[joint.parent]
-        child_obj = link_objects[joint.child]
+    parent_obj = link_objects.get(joint.parent)
+    child_obj = link_objects.get(joint.child)
 
+    if parent_obj and child_obj:
         # Parent the joint Empty to the parent link
         empty.parent = parent_obj
 
         # Reset matrix_parent_inverse to ensure clean local transform
-        # This is critical for nested hierarchies - without it, the joint Empty's
-        # visual position won't match its local coordinates
         empty.matrix_parent_inverse.identity()
 
         # Apply joint origin transform (offset from parent link frame)
@@ -584,30 +572,25 @@ def create_joint_object(joint: Joint, link_objects: dict, collection=None) -> ob
             empty.rotation_euler = (origin.rpy.x, origin.rpy.y, origin.rpy.z)
 
         # Parent the child link to the joint Empty
-        # This creates a cleaner hierarchy: Parent Link -> Joint -> Child Link
         child_obj.parent = empty
-
-        # Reset matrix_parent_inverse to ensure clean local transform
         child_obj.matrix_parent_inverse.identity()
 
-        # Force update of parent's world matrix before setting child position
-        _ = empty.matrix_world  # Access to force recalculation
+        # Force update of parent's world matrix
+        _ = empty.matrix_world
 
         # Set child link's local position to origin (0,0,0)
-        # Since child is parented to joint, and joint is at the child frame origin,
-        # the child link should be at local (0,0,0) relative to the joint.
         child_obj.location = (0, 0, 0)
         child_obj.rotation_euler = (0, 0, 0)
+    else:
+        logger.error(
+            f"Failed to parent joint '{joint.name}': "
+            f"Parent link '{joint.parent}' or child link '{joint.child}' not found in internal map. "
+            f"Existing links: {list(link_objects.keys())}"
+        )
 
     # Add to collection
     if collection:
-        # Link to target collection if not already there
-        if empty not in collection.objects[:]:
-            collection.objects.link(empty)
-        # Remove from all other collections
-        for coll in empty.users_collection[:]:
-            if coll != collection:
-                coll.objects.unlink(empty)
+        move_to_collection(empty, collection)
 
     # Joint visibility is controlled by RGB axes (GPU overlay) and empty display size
     # Empties are always visible in viewport, hide from render only
@@ -634,9 +617,9 @@ def create_sensor_object(sensor, link_objects: dict, collection=None) -> object 
         return None
 
     # Create Empty object for sensor (SPHERE for sensors)
-    bpy.ops.object.empty_add(type="SPHERE", location=(0, 0, 0))
-    empty = bpy.context.active_object
-    empty.name = sensor.name
+    # Using bpy.data.objects.new for context safety
+    empty = bpy.data.objects.new(sensor.name, None)
+    empty.empty_display_type = "SPHERE"
 
     # Set display size from preferences
     prefs = get_addon_prefs()
@@ -724,32 +707,18 @@ def create_sensor_object(sensor, link_objects: dict, collection=None) -> object 
 
         # Gazebo plugin
         if sensor.plugin:
-            # Smart Filter: Check for legacy Gazebo Classic plugins
-            # If we find a known legacy plugin (libgazebo_ros_*), we SKIP importing it.
-            # This ensures that when we re-export, we get a clean "Modern Gazebo Sim" definition
-            # (which uses built-in sensor behavior instead of plugins).
-            is_legacy_plugin = sensor.plugin.filename and "libgazebo_ros_" in sensor.plugin.filename
+            props.use_gazebo_plugin = True
+            props.plugin_filename = sensor.plugin.filename
+            # Store raw XML for round-trip fidelity
+            if sensor.plugin.raw_xml:
+                props.plugin_raw_xml = sensor.plugin.raw_xml
 
-            if is_legacy_plugin:
-                logger.info(
-                    f"Modernizing: Dropping legacy plugin '{sensor.plugin.filename}' from sensor '{sensor.name}'"
-                )
-            else:
-                # Only import if it's NOT a legacy plugin (e.g. custom user plugin)
-                props.use_gazebo_plugin = True
-                props.plugin_filename = sensor.plugin.filename
-                # Store raw XML for round-trip fidelity
-                if sensor.plugin.raw_xml:
-                    props.plugin_raw_xml = sensor.plugin.raw_xml
-
+    # Set up parenting
     link_obj = link_objects[sensor.link_name]
     empty.parent = link_obj
 
-    from mathutils import Matrix
-
-    link_scale = link_obj.matrix_world.to_scale()
-    scale_inv = Matrix.Diagonal((1.0 / link_scale.x, 1.0 / link_scale.y, 1.0 / link_scale.z, 1.0))
-    empty.matrix_parent_inverse = scale_inv
+    # Reset matrix_parent_inverse to ensure clean local transform
+    empty.matrix_parent_inverse.identity()
 
     # Display basic properties
     if sensor.origin:
@@ -759,11 +728,7 @@ def create_sensor_object(sensor, link_objects: dict, collection=None) -> object 
 
     # Add to collection
     if collection:
-        for coll in list(empty.users_collection):
-            if coll != collection:
-                coll.objects.unlink(empty)
-        if empty not in collection.objects[:]:
-            collection.objects.link(empty)
+        move_to_collection(empty, collection)
 
     # Hide from render
     empty.hide_render = True
@@ -771,20 +736,17 @@ def create_sensor_object(sensor, link_objects: dict, collection=None) -> object 
     return empty
 
 
-def import_robot_to_scene(robot: Robot, urdf_path: Path, context) -> bool:
-    """Import Robot model to Blender scene.
+def setup_scene_for_robot(scene, robot: Robot):
+    """Initialize scene properties for a robot model.
+
+    This populates the Centralized Control Dashboard, Gazebo settings,
+    and metadata based on the robot model.
 
     Args:
-        robot: Robot model
-        urdf_path: Path to URDF file
-        context: Blender context
-
-    Returns:
-        True if import succeeded, False otherwise
-
+        scene: Blender Scene object
+        robot: Robot model to extract settings from
     """
     # Set robot name in scene properties
-    scene = context.scene
     scene.linkforge.robot_name = robot.name
 
     # Reset Global LinkForge State
@@ -832,6 +794,41 @@ def import_robot_to_scene(robot: Robot, urdf_path: Path, context) -> bool:
                 continue
             break
 
+    # Legacy Transmissions are no longer auto-converted.
+    # We strictly respect the presence of <ros2_control> tags.
+    if (
+        hasattr(robot, "transmissions")
+        and robot.transmissions
+        and not scene.linkforge.use_ros2_control
+    ):
+        logger.info(
+            f"Note: {len(robot.transmissions)} legacy transmissions found but skipped. "
+            "LinkForge requires explicit <ros2_control> configuration."
+        )
+
+    # Reconstruct from ros2_control? (Handled primarily by Centralized migration)
+    # But for backward compatibility with 3rd party URDFs that use ros2_control
+    # but NO transmissions, we already populated the Centralized list above.
+    # No need to create redundant "Transmission" Empty objects.
+    elif hasattr(robot, "ros2_controls") and robot.ros2_controls:
+        logger.info("Imported centralized ros2_control config. (Skipping legacy transmissions)")
+
+
+def import_robot_to_scene(robot: Robot, urdf_path: Path, context) -> bool:
+    """Import Robot model to Blender scene.
+
+    Args:
+        robot: Robot model
+        urdf_path: Path to URDF file
+        context: Blender context
+
+    Returns:
+        True if import succeeded, False otherwise
+
+    """
+    # Setup global scene properties (ros2_control, metadata, etc.)
+    setup_scene_for_robot(context.scene, robot)
+
     # Create collection for this robot
     collection = bpy.data.collections.new(robot.name)
     context.scene.collection.children.link(collection)
@@ -858,40 +855,6 @@ def import_robot_to_scene(robot: Robot, urdf_path: Path, context) -> bool:
         if obj:
             link_objects[link.name] = obj
 
-    # Sort joints in topological order (parents before children)
-    # This ensures nested hierarchies are built correctly
-    def sort_joints_topological(joints, links):
-        """Sort joints so parents are processed before children."""
-        # Build a map of which links are children
-        child_links = {j.child for j in joints}
-        # Find root links (not children of any joint)
-        root_links = {link.name for link in links if link.name not in child_links}
-
-        # Build adjacency list: parent_link -> [(joint, child_link), ...]
-        children_of = {}
-        for joint in joints:
-            if joint.parent not in children_of:
-                children_of[joint.parent] = []
-            children_of[joint.parent].append(joint)
-
-        # Traverse tree from roots, collecting joints in order
-        sorted_joints = []
-        visited = set()
-
-        def visit(link_name):
-            if link_name in visited:
-                return
-            visited.add(link_name)
-            if link_name in children_of:
-                for joint in children_of[link_name]:
-                    sorted_joints.append(joint)
-                    visit(joint.child)
-
-        for root in root_links:
-            visit(root)
-
-        return sorted_joints
-
     sorted_joints = sort_joints_topological(robot.joints, robot.links)
 
     # Create joint objects in topological order
@@ -902,13 +865,7 @@ def import_robot_to_scene(robot: Robot, urdf_path: Path, context) -> bool:
             joint_objects[joint.name] = joint_obj
 
     # Second pass: Resolve mimic joint pointers
-    # This is necessary because URDF doesn't mandate mimic order relative to kinematic tree
-    for joint in robot.joints:
-        if joint.mimic and joint.name in joint_objects:
-            joint_obj = joint_objects[joint.name]
-            mimic_joint_obj = joint_objects.get(joint.mimic.joint)
-            if mimic_joint_obj:
-                joint_obj.linkforge_joint.mimic_joint = mimic_joint_obj
+    resolve_mimic_joints(robot.joints, joint_objects)
 
     # Create sensor objects
     sensors_created = 0
@@ -916,91 +873,6 @@ def import_robot_to_scene(robot: Robot, urdf_path: Path, context) -> bool:
         for sensor in robot.sensors:
             if create_sensor_object(sensor, link_objects, collection):
                 sensors_created += 1
-
-    # Auto-Convert Legacy Transmissions to Centralized Dashboard
-    # Priority Rule: If modern ros2_control exists, we prefer it.
-    # If NOT, we read the legacy transmissions and convert them directly to the new system.
-    has_ros2_control = hasattr(scene, "linkforge") and scene.linkforge.use_ros2_control
-
-    if hasattr(robot, "transmissions") and robot.transmissions:
-        if not has_ros2_control:
-            logger.info("Auto-converting legacy transmissions to Centralized Control system...")
-
-            # Enable the system
-            scene.linkforge.use_ros2_control = True
-
-            # Track added joints to prevent duplicates
-            added_joints = {item.name for item in scene.linkforge.ros2_control_joints}
-            converted_count = 0
-
-            for transmission in robot.transmissions:
-                # We need at least one joint and an actuator/interface definition
-                if not transmission.joints:
-                    continue
-
-                joint_name = transmission.joints[0].name
-
-                # If we've already configured this joint, skip
-                if joint_name in added_joints:
-                    continue
-
-                # Create new item in dashboard
-                item = scene.linkforge.ros2_control_joints.add()
-                item.name = joint_name
-                added_joints.add(joint_name)
-                converted_count += 1
-
-                # Determine Interface Mode
-                is_position = False
-                is_velocity = False
-                is_effort = False
-
-                # Check transmission type first
-                t_type = transmission.type.lower()
-                if "position" in t_type:
-                    is_position = True
-                elif "velocity" in t_type:
-                    is_velocity = True
-                elif "effort" in t_type:
-                    is_effort = True
-
-                # Check actuators (more standard)
-                for actuator in transmission.actuators:
-                    hw = actuator.hardware_interface.lower() if actuator.hardware_interface else ""
-                    if "position" in hw:
-                        is_position = True
-                    elif "velocity" in hw:
-                        is_velocity = True
-                    elif "effort" in hw:
-                        is_effort = True
-
-                # Fallback: Default to Position if nothing specific found (safest for most arms)
-                if not (is_position or is_velocity or is_effort):
-                    is_position = True
-
-                # Apply to Item
-                if is_position:
-                    item.cmd_position = True
-                    item.state_position = True
-                if is_velocity:
-                    item.cmd_velocity = True
-                    item.state_velocity = True
-                if is_effort:
-                    item.cmd_effort = True
-                    item.state_effort = True
-
-            logger.info(f"Auto-converted {converted_count} legacy transmissions to Dashboard")
-        else:
-            logger.info(
-                f"Skipped {len(robot.transmissions)} legacy transmissions (ros2_control active)"
-            )
-
-    # Reconstruct from ros2_control? (Handled primarily by Centralized migration)
-    # But for backward compatibility with 3rd party URDFs that use ros2_control
-    # but NO transmissions, we already populated the Centralized list above.
-    # No need to create redundant "Transmission" Empty objects.
-    elif hasattr(robot, "ros2_controls") and robot.ros2_controls:
-        logger.info("Imported centralized ros2_control config. (Skipping legacy transmissions)")
 
     # Update scene to ensure all transforms are calculated correctly
     # This is critical for round-trip: ensures child link locations are properly evaluated
@@ -1018,10 +890,12 @@ def import_robot_to_scene(robot: Robot, urdf_path: Path, context) -> bool:
     logger.info(f"Import complete - {', '.join(completion_parts)} created")
     # Sync collision visibility with scene property
     # This ensures that if 'Show Collisions' is off (default), the newly imported collision meshes are hidden
-    if hasattr(scene, "linkforge") and hasattr(scene.linkforge, "update_collision_visibility"):
+    if hasattr(context.scene, "linkforge") and hasattr(
+        context.scene.linkforge, "update_collision_visibility"
+    ):
         # We need to pass the context or property group self. Since update method expects self,
         # we can call the function directly or trigger property update.
         # Calling the update function bound to the property group instance is safest.
-        scene.linkforge.update_collision_visibility(context)
+        context.scene.linkforge.update_collision_visibility(context)
 
     return True
