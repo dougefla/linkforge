@@ -504,10 +504,24 @@ LinkForge is currently maintained by @arounamounchili and the community.
 
 ## Recognition
 
-We value every contribution, big or small. Contributors are recognized in:
-- `CHANGELOG.md`
-- GitHub contributors page
-- Release notes
+We value every contribution! To keep things simple for maintainers, **contributor recognition is fully automated**:
+
+- **`README.md`**: Handled by the `@all-contributors` bot.
+- **`CHANGELOG.md` & Release Notes**: Automated via `release-please` based on commit messages.
+- **GitHub Contributors**: Managed automatically by GitHub's platform.
+
+### 🤖 All Contributors Bot
+
+We use the [@all-contributors](https://allcontributors.org/) bot to automatedly recognize all types of contributions.
+
+**How to get recognized:**
+If you've contributed (code, docs, ideas, etc.), you can ask the bot to add you by commenting on an issue or pull request:
+
+```text
+@all-contributors please add @username for <contribution-type>
+```
+
+Replace `<contribution-type>` with one of the [valid contribution types](https://allcontributors.org/docs/en/emoji-key) (e.g., `code`, `doc`, `bug`, etc.).
 
 ### Academic Recognition
 For significant core contributions (new sensor systems, physics engine refinements, major architectural changes), we may invite you to be listed as a co-author in the `CITATION.cff` file and the official documentation, ensuring your work is properly attributed in academic research using LinkForge.
