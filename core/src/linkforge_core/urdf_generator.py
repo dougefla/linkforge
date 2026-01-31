@@ -5,7 +5,7 @@ LinkForge robot models into industry-standard Unified Robot Description Format
 (URDF) XML files. It ensures high-fidelity export for a wide range of
 simulators (Gazebo, Webots, Isaac Sim, etc.) by handling:
 
-- **Link & Joint Structures**: Precise mapping of Blender transforms to URDF origin and axis.
+- **Link & Joint Structures**: Precise mapping of 3D transforms to URDF origin and axis.
 - **Physical Properties**: Accurate mass, center of mass, and inertia tensor serialization.
 - **Visuals & Collisions**: Support for multiple geometric primitives and mesh-based representations.
 - **Material Management**: Automatic deduplication and global vs. inline definition of colors.
@@ -889,7 +889,7 @@ class URDFGenerator(RobotGenerator[str]):
             for rc in robot.ros2_controls:
                 self._add_parsed_ros2_control_element(parent, rc)
         elif robot.transmissions:
-            # Generate ros2_control from transmissions (from Blender scene) if enabled
+            # Generate ros2_control from transmissions if enabled
             parent.append(ET.Comment(" ROS2 Control "))
             self._add_ros2_control_element(parent, robot)
 
