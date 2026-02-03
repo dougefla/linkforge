@@ -34,7 +34,19 @@ WHEELS_DIR = PLATFORM_DIR / "wheels"
 DIST_DIR = REPO_ROOT / "dist"  # Keep dist in root for easy access
 
 # Packages to bundle as wheels for cross-platform/cross-version compatibility
-DEP_CONFIG = {}
+DEP_CONFIG = {
+    "PyYAML": {
+        "version": "6.0.3",
+        "universal": False,
+        "platforms": [
+            "win_amd64",
+            "macosx_11_0_arm64",
+            "macosx_10_13_x86_64",
+            "manylinux2014_x86_64",
+        ],
+        "py_versions": ["311"],  # Blender 4.2+
+    }
+}
 
 
 def read_manifest_value(key: str) -> str:
@@ -178,8 +190,8 @@ def build_extension() -> Path:
 
     # 3. Copy dependencies (if any)
     if WHEELS_DIR.exists() and any(WHEELS_DIR.iterdir()):
-        shutil.copytree(WHEELS_DIR, staging_dir / "dependencies")
-        print(f"  Bundled dependencies -> {staging_dir / 'dependencies'}")
+        shutil.copytree(WHEELS_DIR, staging_dir / "wheels")
+        print(f"  Bundled dependencies -> {staging_dir / 'wheels'}")
 
     # 4. Copy license/readme
     for f in ["LICENSE", "README.md"]:
@@ -222,6 +234,16 @@ def build_extension() -> Path:
 
     # Clean up staging on success
     shutil.rmtree(staging_dir)
+
+    # 5. Rename packages for platform clarity (LinkForge Multi-Platform Vision)
+    # This distinguishes 'linkforge-blender' from future 'linkforge-freecad', etc.
+    print("✨ Renaming packages for platform clarity...")
+    extension_id = read_manifest_value("id")
+    for zip_file in DIST_DIR.glob(f"{extension_id}*.zip"):
+        if "-blender" not in zip_file.name:
+            new_name = zip_file.name.replace(extension_id, f"{extension_id}-blender")
+            zip_file.rename(DIST_DIR / new_name)
+            print(f"  {zip_file.name} -> {new_name}")
 
     print(f"\n✅ Created split-platform packages in {DIST_DIR}/")
     return DIST_DIR

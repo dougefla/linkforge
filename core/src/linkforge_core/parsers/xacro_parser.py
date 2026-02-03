@@ -1,15 +1,27 @@
 """Native XACRO resolver for LinkForge.
 
 This module provides a pure-Python implementation for resolving XACRO macros,
-properties, and includes, removing the need for external dependencies like xacrodoc.
+properties, and includes.
 """
 
 from __future__ import annotations
 
+import math
 import re
 import xml.etree.ElementTree as ET
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
+
+try:
+    import yaml  # type: ignore
+except ImportError:
+    yaml = None
+
+try:
+    import json
+except ImportError:
+    json = None  # type: ignore
 
 from ..base import RobotParser, RobotParserError
 from ..logging_config import get_logger
@@ -17,7 +29,30 @@ from ..models.robot import Robot
 
 logger = get_logger(__name__)
 
-XACRO_NS = "http://www.ros.org/wiki/xacro"
+XACRO_URIS = [
+    "http://www.ros.org/wiki/xacro",
+    "http://wiki.ros.org/xacro",
+]
+
+
+# Safe math context for evaluations
+MATH_CONTEXT: dict[str, Any] = {
+    name: getattr(math, name) for name in dir(math) if not name.startswith("__")
+}
+# Security: Allow safe primitives but no dangerous builtins
+MATH_CONTEXT["__builtins__"] = {
+    "abs": abs,
+    "float": float,
+    "int": int,
+    "len": len,
+    "max": max,
+    "min": min,
+    "round": round,
+    "str": str,
+    "list": list,
+    "dict": dict,
+    "bool": bool,
+}
 
 
 class XacroResolver:
@@ -25,11 +60,17 @@ class XacroResolver:
 
     def __init__(self, search_paths: list[Path] | None = None, max_depth: int = 50) -> None:
         self.search_paths = search_paths or []
-        self.properties: dict[str, str] = {}
+        self.properties: dict[str, Any] = {}
         self.macros: dict[str, tuple[list[str], ET.Element]] = {}
         self.args: dict[str, str] = {}
         self.max_depth = max_depth
         self._current_depth = 0
+        self._ns_stack: list[str] = []
+
+        # Per-instance evaluation context to allow file-aware data loading
+        self.eval_context = MATH_CONTEXT.copy()
+        self.eval_context["load_yaml"] = self._handle_load_yaml
+        self.eval_context["load_json"] = self._handle_load_json
 
     def resolve_file(self, filepath: Path) -> str:
         """Resolve a XACRO file and return URDF string."""
@@ -69,13 +110,22 @@ class XacroResolver:
 
     def _resolve_element_impl(self, element: ET.Element) -> ET.Element:
         """Core recursive resolution logic."""
-        tag = element.tag.replace(f"{{{XACRO_NS}}}", "xacro:")
+        # Convert any recognized XACRO namespace URI to 'xacro:' prefix
+        tag = element.tag
+        for uri in XACRO_URIS:
+            prefix = f"{{{uri}}}"
+            if tag.startswith(prefix):
+                tag = tag.replace(prefix, "xacro:")
+                break
 
         # 1. Handle properties: <xacro:property name="..." value="..."/>
         if tag == "xacro:property":
             name = element.get("name")
             value = element.get("value") or element.text
             if name:
+                # Apply namespace prefix if active
+                if self._ns_stack:
+                    name = f"{'.'.join(self._ns_stack)}.{name}"
                 self.properties[name] = self._substitute(value or "")
             return ET.Element("skip")
 
@@ -87,15 +137,19 @@ class XacroResolver:
                 self.args[name] = self._substitute(default or "")
             return ET.Element("skip")
 
-        # 3. Handle includes: <xacro:include filename="..."/>
+        # 3. Handle includes: <xacro:include filename="..." ns="..."/>
         if tag == "xacro:include":
             filename = self._substitute(element.get("filename") or "")
+            ns = element.get("ns")
             included_path = self._find_file(filename)
             if included_path:
                 # Store state to handle nested includes correctly
                 old_paths = self.search_paths[:]
                 if included_path.parent not in self.search_paths:
                     self.search_paths.insert(0, included_path.parent)
+
+                if ns:
+                    self._ns_stack.append(ns)
 
                 included_tree = ET.parse(included_path)
                 included_root = included_tree.getroot()
@@ -111,6 +165,8 @@ class XacroResolver:
                         container.append(resolved_child)
 
                 self.search_paths = old_paths
+                if ns:
+                    self._ns_stack.pop()
                 return container
             return ET.Element("skip")
 
@@ -119,6 +175,9 @@ class XacroResolver:
             name = element.get("name")
             params = [p.strip() for p in (element.get("params") or "").split() if p.strip()]
             if name:
+                # Apply namespace prefix if active
+                if self._ns_stack:
+                    name = f"{'.'.join(self._ns_stack)}.{name}"
                 self.macros[name] = (params, element)
             return ET.Element("skip")
 
@@ -163,7 +222,7 @@ class XacroResolver:
         if tag.startswith("xacro:"):
             if tag[6:] in self.macros:
                 params, macro_elem = self.macros[tag[6:]]
-                local_props = {}
+                local_props: dict[str, Any] = {}
 
                 # Parse parameters
                 block_params = [p[1:] for p in params if p.startswith("*")]
@@ -205,11 +264,12 @@ class XacroResolver:
         # 8. Handle substitutions in text and attributes for regular elements
         new_attrib = {}
         for key, val in element.attrib.items():
-            new_attrib[key] = self._substitute(val)
+            # Attributes in XML must be strings
+            new_attrib[key] = str(self._substitute(val))
 
         new_element = ET.Element(element.tag, attrib=new_attrib)
-        new_element.text = self._substitute(element.text or "")
-        new_element.tail = self._substitute(element.tail or "")
+        new_element.text = str(self._substitute(element.text or ""))
+        new_element.tail = str(self._substitute(element.tail or ""))
 
         # 9. Recursively process children
         for child in element:
@@ -233,12 +293,13 @@ class XacroResolver:
             return False
         else:
             try:
-                # Basic string/bool comparison
-                return bool(eval(condition, {"__builtins__": {}}, {}))
+                # Basic string/bool comparison with math/data support
+                ctx = {**self.eval_context, **self.properties, **self.args}
+                return bool(eval(condition, ctx, {}))
             except Exception:
                 return condition not in ("", "0", "false")
 
-    def _substitute(self, text: str) -> str:
+    def _substitute(self, text: str) -> Any:
         """Handle ${prop}, $(arg name), and $(find pkg) substitutions with math."""
         if not text:
             return ""
@@ -251,31 +312,82 @@ class XacroResolver:
         text = re.sub(r"\$\(find (.*?)\)", lambda m: f"package://{m.group(1)}", text)
 
         # 3. Handle properties and math: ${expression}
+        # If the entire string is a single ${...} block, return the object directly.
+        # This keeps dicts/lists as real objects for subsequent evaluations.
+        stripped = text.strip()
+        if stripped.startswith("${") and stripped.count("${") == 1 and stripped.endswith("}"):
+            expr = stripped[2:-1]
+            return self._evaluate(expr)
+
         def replace_expr(match: re.Match[str]) -> str:
             expr = match.group(1)
+            res = self._evaluate(expr)
+            return str(res)
 
-            # Replace property names with values
-            for name, val in self.properties.items():
-                # Ensure we only replace whole words to avoid partial matches
-                if name in expr:
-                    expr = re.sub(rf"\b{name}\b", str(val), expr)
-
-            # Attempt to evaluate as math. If it fails, or if it looks like a vector
-            # (non-math characters or multiple numbers), we return the substituted string as-is.
-            try:
-                # Safe eval for basic math (+, -, *, /, parentheses)
-                # We restrict globals to empty and locals to basic math symbols
-                res = eval(expr, {"__builtins__": {}}, {})
-                # If the result is a number, return it as string
-                if isinstance(res, (int, float)):
-                    return str(res)
-                return str(res)
-            except Exception:
-                return expr
-
-        text = re.sub(r"\${(.*?)}", replace_expr, text)
+        # If we have mixed text and expressions, we must stringify everything.
+        # Use a lambda to ensure we always return strings for re.sub.
+        if "${" in text:
+            text = re.sub(r"\${(.*?)}", replace_expr, text)
 
         return text
+
+    def _evaluate(self, expr: str) -> Any:
+        """Evaluate a single XACRO expression with hierarchical namespace support."""
+        try:
+            # Build nested context for hierarchical namespaces (e.g. arm.mass)
+            ctx = self.eval_context.copy()
+            ctx.update(self.args)
+
+            for name, val in self.properties.items():
+                if "." in name:
+                    parts = name.split(".")
+                    curr = ctx
+                    for part in parts[:-1]:
+                        if part not in curr or not isinstance(curr[part], SimpleNamespace):
+                            curr[part] = SimpleNamespace()
+                        curr = curr[part].__dict__
+                    curr[parts[-1]] = val
+                else:
+                    ctx[name] = val
+
+            return eval(expr, ctx, {})
+        except Exception as e:
+            logger.debug(f"XACRO evaluation failed for '{expr}': {e}")
+            return expr
+
+    def _handle_load_yaml(self, filename: str) -> Any:
+        """Helper to load YAML file in XACRO context."""
+        if yaml is None:
+            logger.error("XACRO: PyYAML is not installed. load_yaml() failed.")
+            return {}
+
+        path = self._find_file(filename)
+        if not path:
+            logger.error(f"XACRO: Could not find YAML file {filename}")
+            return {}
+        try:
+            with open(path) as f:
+                return yaml.safe_load(f)
+        except Exception as e:
+            logger.error(f"XACRO: Failed to load YAML {filename}: {e}")
+            return {}
+
+    def _handle_load_json(self, filename: str) -> Any:
+        """Helper to load JSON file in XACRO context."""
+        if json is None:
+            # This should theoretically not happen as json is stdlib
+            return {}
+
+        path = self._find_file(filename)
+        if not path:
+            logger.error(f"XACRO: Could not find JSON file {filename}")
+            return {}
+        try:
+            with open(path) as f:
+                return json.load(f)
+        except Exception as e:
+            logger.error(f"XACRO: Failed to load JSON {filename}: {e}")
+            return {}
 
     def _finalize_urdf(self, root: ET.Element) -> str:
         """Strip XACRO artifacts and format the final XML."""

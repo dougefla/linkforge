@@ -7,7 +7,7 @@ schema_version = "1.0.0"
 id = "linkforge"
 
 # Version follows semantic versioning (MAJOR.MINOR.PATCH)
-version = "1.2.0"
+version = "1.2.0" # x-release-please-version
 
 # Display name shown in Blender
 name = "LinkForge"
@@ -53,6 +53,15 @@ platforms = [
     "macos-x64",
     "linux-x64",
 ]
+
+# BEGIN AUTOMATED WHEELS
+wheels = [
+    "./wheels/pyyaml-6.0.3-cp311-cp311-macosx_10_13_x86_64.whl",
+    "./wheels/pyyaml-6.0.3-cp311-cp311-macosx_11_0_arm64.whl",
+    "./wheels/pyyaml-6.0.3-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl",
+    "./wheels/pyyaml-6.0.3-cp311-cp311-win_amd64.whl",
+]
+# END AUTOMATED WHEELS
 
 # Permissions required by the extension
 # https://docs.blender.org/manual/en/latest/advanced/extensions/addons.html#permissions
