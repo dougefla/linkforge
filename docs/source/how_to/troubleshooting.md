@@ -5,10 +5,11 @@ This guide addresses common challenges in the LinkForge-to-Simulation workflow, 
 ## ⚖️ Physics Stability
 
 ### Robot "folds," "explodes," or jitters in simulation
-**Cause**: Numerical instability, usually caused by inconsistent mass data or misaligned origins.
+**Cause**: Numerical instability, usually caused by inconsistent mass data, misaligned origins, or "Double-Offsets" from world-baked meshes.
 **Solutions**:
 - **Check Inertial Values**: Tiny or zero values (`ixx`, `iyy`, `izz`) cause solvers to fail. Ensure **Auto-Calculate Inertia** is enabled in the **Links** panel.
-- **Apply Scale and Rotation**: In Blender, non-uniform scale or un-applied rotations on your visual meshes can lead to incorrect bounding box calculations. Select your meshes and press `Ctrl+A > All Transforms`.
+- **Mesh Centering**: LinkForge automatically localizes your meshes during export (Geometric Centering). This ensures the STL folder contains 0,0,0-centered meshes, while the URDF handles the offset. This prevents "double-transformation" explosions.
+- **Apply Scale and Rotation**: Before marking a mesh as a link, ensure its scale is `1.0`. While LinkForge fixes scaling during collision generation, keeping your visual objects at `1.0` scale in Blender prevents mathematical edge cases. `Ctrl+A > All Transforms` is the best practice.
 - **Simplify Collision**: High-poly collision meshes cause physics "jitter." Use the **Collision Quality** slider in the **Links** panel to decimate your hulls.
 
 ### Joints are "weak" or non-responsive
@@ -26,10 +27,17 @@ This guide addresses common challenges in the LinkForge-to-Simulation workflow, 
 - **Joint Parenting**: In LinkForge, joints define the parent/child relationship. Ensure every link (except the root) is assigned as a **Child Link** in exactly one joint.
 
 ### "Inverted" Rotation or Translation
-**Cause**: The joint's local axis orientation is reversed.
+**Cause**: The joint's local axis orientation is reversed or the Euler order is mismatched.
 **Solutions**:
+- **Rotation Order**: LinkForge uses a strict **XYZ extrinsic RPY** mapping. Ensure your Blender objects are set to `XYZ` rotation mode. LinkForge enforces this automatically on Link and Joint creation.
 - **Visual Check**: Follow the RGB arrows at the joint origin.
 - **Change the Axis**: In the **Joints** panel, select the appropriate **Axis** button (X, Y, Z, or CUSTOM).
+
+### Values "varying" by tiny decimals (1e-6)
+**Cause**: Floating-point drift and "Quantization." This occurs when converting between Matrices (Blender internal) and RPY (URDF).
+**Solution**:
+- This is normal and expected in robotics.
+- To "lock" a value, manually type the desired number (e.g., `0` or `1.5708`) into the LinkForge property field. This prevents the tiny matrix flickers from affecting your export over multiple design cycles.
 
 ## 📦 Asset & Export Management
 
@@ -56,5 +64,5 @@ This guide addresses common challenges in the LinkForge-to-Simulation workflow, 
 
 - **Selection via Outliner**: When your robot gets complex, clicking small joint empties in the 3D Viewport can be difficult. Use the **Blender Outliner** to select components by name; the LinkForge panels will update instantly.
 - **Naming Discipline**: While **LinkForge automatically sanitizes** names during export (e.g., "My Arm!" -> `my_arm`), it is best practice to use alphanumeric characters and underscores in Blender. This ensures your Blender Outliner matches your generated ROS 2 topics 1:1.
-- **Apply Location**: Besides Scale and Rotation, ensure your "Root Link" (usually `base_link`) is at `(0, 0, 0)` in Blender's world space before starting your build. This ensures the robot spawns correctly at the world origin in simulation.
+- **Apply Location**: Besides Scale and Rotation, ensure your "Root Link" (usually `base_link`) is at `(0, 0, 0)` in Blender's world space before starting your build. While LinkForge **automatically centers child mesh data**, keep your robot centered at the world origin for clean simulation spawning.
 - **Save Often**: LinkForge stores its data inside the `.blend` file. Save your work frequently to preserve your kinematic tree and sensor configurations.

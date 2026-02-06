@@ -263,6 +263,7 @@ def create_collision_for_link(link_obj, collision_type, context):
     # Make collision visually distinct (wireframe + semi-transparent)
     collision_obj.display_type = "WIRE"
     collision_obj.show_in_front = True  # X-ray mode
+    collision_obj.rotation_mode = "XYZ"
 
     # Store the collision type for accurate export (prevents auto-detection failures)
     collision_obj["collision_geometry_type"] = collision_type
@@ -285,50 +286,40 @@ def _create_primitive_collision(visual_obj, prim_type, link_name, context):
     local_bbox = [mathutils.Vector(v) for v in visual_obj.bound_box]
     local_center = sum(local_bbox, mathutils.Vector((0, 0, 0))) / 8.0
 
-    # Get visual's dimensions and parent scale
-    local_dims = visual_obj.dimensions.copy()
-
-    # Get parent scale to convert world dims to local dims
-    if visual_obj.parent:
-        parent_scale = visual_obj.parent.scale
-        local_dims.x /= parent_scale.x
-        local_dims.y /= parent_scale.y
-        local_dims.z /= parent_scale.z
-
+    # Create primitive at world origin initially
+    # We create them at unit size for predictable scaling via dimensions
     if prim_type == "BOX":
-        # Create cube at local size
+        # Create cube (1x1x1)
         bpy.ops.mesh.primitive_cube_add(size=1.0, location=(0, 0, 0))
-        collision_obj = context.active_object
-        collision_obj.dimensions = local_dims
-
     elif prim_type == "SPHERE":
-        # Create sphere at local size
-        radius = max(local_dims) / 2.0
-        bpy.ops.mesh.primitive_uv_sphere_add(radius=radius, location=(0, 0, 0))
-        collision_obj = context.active_object
-
+        # Create sphere (radius 0.5 = 1m diameter)
+        bpy.ops.mesh.primitive_uv_sphere_add(radius=0.5, location=(0, 0, 0))
     elif prim_type == "CYLINDER":
-        # Create cylinder at local size
-        radius = max(local_dims.x, local_dims.y) / 2.0
-        depth = local_dims.z
-        bpy.ops.mesh.primitive_cylinder_add(radius=radius, depth=depth, location=(0, 0, 0))
-        collision_obj = context.active_object
-
+        # Create cylinder (radius 0.5, depth 1.0 = 1x1x1 volume)
+        bpy.ops.mesh.primitive_cylinder_add(radius=0.5, depth=1.0, location=(0, 0, 0))
     else:
         return None, mathutils.Vector((0, 0, 0))
 
-    # Apply scale to bake dimensions into geometry
-    # This ensures collision has scale=1.0 with geometry at local size
-    # When parented to link, it will inherit parent's scale to reach correct world size
+    collision_obj = context.active_object
+
+    # CRITICAL: Match World Pose (Location/Rotation) first
+    # We include local_center offset to align primitive with specific geometry volume
+    collision_obj.matrix_world = visual_obj.matrix_world @ mathutils.Matrix.Translation(
+        local_center
+    )
+
+    # CRITICAL: Match World Dimensions exactly
+    # Setting dimensions AFTER matrix_world ensures it overrides any scale inherited from visual
+    collision_obj.dimensions = visual_obj.dimensions.copy()
+
+    # Apply scale to bake dimensions into geometry (Scale 1.0 standard)
     bpy.context.view_layer.objects.active = collision_obj
-
-    # Ensure object is visible for transform_apply operator
     collision_obj.hide_viewport = False
-
     bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
 
     # Name it
     collision_obj.name = f"{link_name}_collision"
+    collision_obj.rotation_mode = "XYZ"
 
     return collision_obj, local_center
 
@@ -399,6 +390,11 @@ def _merge_visual_meshes(visual_objects, link_obj, context):
     # Join into single mesh
     bpy.ops.object.join()
     merged_obj = context.active_object
+
+    # CRITICAL: Align merged object with link world frame
+    # Vertices were baked relative to Link, so the object definition must be AT the Link.
+    merged_obj.matrix_world = link_obj.matrix_world.copy()
+
     logger.debug(
         f"Compound collision created: {merged_obj.name} ({len(merged_obj.data.vertices)} vertices)"
     )
@@ -435,6 +431,7 @@ def _create_convex_hull_collision_compound(visual_objects, link_obj, context):
 
     # Name it
     merged_obj.name = f"{link_obj.name}_collision"
+    merged_obj.rotation_mode = "XYZ"
 
     return merged_obj
 
@@ -560,6 +557,7 @@ class LINKFORGE_OT_add_empty_link(Operator):
 
         # Add to scene
         context.collection.objects.link(empty)
+        empty.rotation_mode = "XYZ"
 
         # Place at 3D cursor
         empty.location = context.scene.cursor.location.copy()
@@ -652,20 +650,31 @@ class LINKFORGE_OT_create_link_from_mesh(Operator):
         # Add to scene
         context.collection.objects.link(empty)
 
-        # Position Empty at mesh origin
-        empty.location = mesh_obj.location.copy()
-        empty.rotation_euler = mesh_obj.rotation_euler.copy()
+        # Position Empty at mesh world pose precisely
+        empty.matrix_world = mesh_obj.matrix_world.copy()
         # Ensure Link is Scale (1,1,1)
         empty.scale = (1, 1, 1)
+        empty.rotation_mode = "XYZ"
 
         # Parent mesh to Empty with STRICT properties for URDF compatibility:
-        # 1. Parent Inverse = Identity (No hidden transforms)
-        # 2. Local Location/Rotation = 0 (Visual matches Link frame)
-        # 3. Local Scale = Original Mesh Scale (Preserves visual size)
+        # 1. Clear legacy parenting (Bones/Armatures) to prevent dependency cycle warnings
+        mesh_obj.parent_type = "OBJECT"
+        mesh_obj.parent_bone = ""
+
+        # Remove Armature modifiers if present (LinkForge links are rigid bodies)
+        for mod in mesh_obj.modifiers:
+            if mod.type == "ARMATURE":
+                mesh_obj.modifiers.remove(mod)
+
+        # 2. Parent Inverse = Identity (No hidden transforms)
+        # 3. Local Location/Rotation = 0 (Visual matches Link frame)
+        # 4. Local Scale = Original Mesh Scale (Preserves visual size)
 
         mesh_obj.parent = empty
         mesh_obj.matrix_parent_inverse.identity()
 
+        # CRITICAL: Force XYZ mode BEFORE zeroing rotations to ensure absolute precision
+        mesh_obj.rotation_mode = "XYZ"
         mesh_obj.location = (0, 0, 0)
         mesh_obj.rotation_euler = (0, 0, 0)
         # mesh_obj.scale is already correct (it was S, parent is 1, so S stays S)
