@@ -13,6 +13,7 @@ Visualization Style:
 from __future__ import annotations
 
 import math
+import typing
 from typing import Any
 
 import bpy
@@ -22,10 +23,21 @@ from mathutils import Matrix, Vector
 
 from ..preferences import get_addon_prefs
 
+_builtin_shader_name = None
 
-def get_shader() -> Any:
-    """Get the builtin shader."""
-    return gpu.shader.from_builtin("FLAT_COLOR")
+
+def get_shader() -> gpu.types.GPUShader:
+    """Get the appropriate builtin shader name for the current Blender version."""
+    global _builtin_shader_name
+    if _builtin_shader_name is None:
+        try:
+            # 4.3+ name
+            gpu.shader.from_builtin("FLAT_COLOR")
+            _builtin_shader_name = "FLAT_COLOR"
+        except Exception:
+            # Older versions
+            _builtin_shader_name = "3D_FLAT_COLOR"
+    return typing.cast(gpu.types.GPUShader, gpu.shader.from_builtin(_builtin_shader_name))
 
 
 # Global drawing handle
@@ -229,7 +241,10 @@ def tag_redraw() -> None:
     if not hasattr(context, "window_manager") or not context.window_manager:
         return
 
-    for window in context.window_manager.windows:
+    wm = context.window_manager
+    for window in wm.windows:
+        if not window.screen:
+            continue
         for area in window.screen.areas:
             if area.type == "VIEW_3D":
                 area.tag_redraw()
@@ -249,10 +264,12 @@ def ensure_inertia_handler() -> None:
         tag_redraw()
 
 
-def check_manual_inertia_on_load(dummy: Any = None) -> float | None:
+def check_manual_inertia_on_load(dummy_a: Any = None, dummy_b: Any = None) -> float | None:
     """Check if any link has Manual Inertia on file load or registration."""
     try:
         scene = bpy.context.scene
+        if not scene:
+            return None
     except (AttributeError, RuntimeError):
         return None
 
@@ -277,7 +294,8 @@ def register() -> None:
     """Register inertia visualization components."""
     # Register load handler to scan for manual inertia usage on file open
     if check_manual_inertia_on_load not in bpy.app.handlers.load_post:
-        bpy.app.handlers.load_post.append(check_manual_inertia_on_load)
+        # Load post handlers receive (None, None) or (filepath, None)
+        bpy.app.handlers.load_post.append(typing.cast(typing.Any, check_manual_inertia_on_load))
 
     # Also check current scene immediately (handles "enable addon" case)
     # Use timer to let context initialize if needed
@@ -290,7 +308,7 @@ def unregister() -> None:
 
     # Remove load handler
     if check_manual_inertia_on_load in bpy.app.handlers.load_post:
-        bpy.app.handlers.load_post.remove(check_manual_inertia_on_load)
+        bpy.app.handlers.load_post.remove(typing.cast(typing.Any, check_manual_inertia_on_load))
 
     # Remove draw handler
     if _draw_handle is not None:

@@ -1,6 +1,4 @@
-"""Operators for managing centralized ros2_control joints."""
-
-from __future__ import annotations
+import typing
 
 import bpy
 from bpy.props import StringProperty
@@ -20,15 +18,31 @@ class LINKFORGE_OT_add_ros2_control_joint(Operator):
     joint_name: StringProperty(name="Joint Name")  # type: ignore
 
     @classmethod
-    def poll(cls, context: Context):
-        """Check if operators can run."""
+    def poll(cls, context: Context) -> bool:
+        """Check if operators can run.
+
+        Args:
+            context: The current Blender context.
+
+        Returns:
+            True if the scene has LinkForge properties initialized.
+        """
         return hasattr(context.scene, "linkforge")
 
     @safe_execute
-    def execute(self, context: Context):
-        """Execute the operator."""
+    def execute(self, context: Context) -> set[str]:
+        """Execute the operator.
+
+        Args:
+            context: The execution context.
+
+        Returns:
+            Set containing the execution state (e.g., {'FINISHED'}).
+        """
         scene = context.scene
-        props = scene.linkforge
+        if not scene:
+            return {"CANCELLED"}
+        props = typing.cast(typing.Any, scene).linkforge
 
         # Check if joint already exists in collection
         for item in props.ros2_control_joints:
@@ -63,15 +77,33 @@ class LINKFORGE_OT_remove_ros2_control_joint(Operator):
     bl_options = {"REGISTER", "UNDO"}
 
     @classmethod
-    def poll(cls, context: Context):
-        """Check if operators can run."""
+    def poll(cls, context: Context) -> bool:
+        """Check if operators can run.
+
+        Args:
+            context: The current Blender context.
+
+        Returns:
+            True if there are joints in the control system.
+        """
+        if not context.scene:
+            return False
         props = getattr(context.scene, "linkforge", None)
-        return props and len(props.ros2_control_joints) > 0
+        return bool(props and len(props.ros2_control_joints) > 0)
 
     @safe_execute
-    def execute(self, context: Context):
-        """Execute the operator."""
-        props = context.scene.linkforge
+    def execute(self, context: Context) -> set[str]:
+        """Execute the operator.
+
+        Args:
+            context: The execution context.
+
+        Returns:
+            Set containing the execution state.
+        """
+        if not context.scene:
+            return {"CANCELLED"}
+        props = typing.cast(typing.Any, context.scene).linkforge
         index = props.ros2_control_active_joint_index
 
         if 0 <= index < len(props.ros2_control_joints):
@@ -98,15 +130,33 @@ class LINKFORGE_OT_move_ros2_control_joint(Operator):
     direction: StringProperty()  # type: ignore
 
     @classmethod
-    def poll(cls, context: Context):
-        """Check if operators can run."""
+    def poll(cls, context: Context) -> bool:
+        """Check if operators can run.
+
+        Args:
+            context: The current Blender context.
+
+        Returns:
+            True if there are multiple joints to move.
+        """
+        if not context.scene:
+            return False
         props = getattr(context.scene, "linkforge", None)
-        return props and len(props.ros2_control_joints) > 1
+        return bool(props and len(props.ros2_control_joints) > 1)
 
     @safe_execute
-    def execute(self, context: Context):
-        """Execute the operator."""
-        props = context.scene.linkforge
+    def execute(self, context: Context) -> set[str]:
+        """Execute the operator.
+
+        Args:
+            context: The execution context.
+
+        Returns:
+            Set containing the execution state.
+        """
+        if not context.scene:
+            return {"CANCELLED"}
+        props = typing.cast(typing.Any, context.scene).linkforge
         index = props.ros2_control_active_joint_index
         new_index = index
 

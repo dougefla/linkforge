@@ -3,35 +3,59 @@
 from __future__ import annotations
 
 import contextlib
+import typing
 
 import bpy
-from bpy.types import Operator
+from bpy.props import StringProperty
+from bpy.types import Context, Object, Operator, Scene
 
 from ..utils.decorators import safe_execute
 
 
-def build_tree_structure(scene):
-    """Build robot tree structure from scene objects.
+def build_tree_structure(
+    scene: Scene | None,
+) -> tuple[
+    dict[str, list[tuple[str, str, str]]],
+    str | None,
+    dict[tuple[str, str], Object],
+    dict[str, Object],
+]:
+    """Build a kinematic tree from the scene objects.
+
+    Iterates through all objects in the scene to reconstruct the parent-child relationships
+    defined by LinkForge joints.
+
+    Args:
+        scene: The Blender scene to analyze.
 
     Returns:
-        tuple: (tree dict, root_link str, joints dict, links dict)
-            - tree: mapping parent links to list of (child_link, joint_name, joint_type)
-            - root_link: name of root link
-            - joints: dict mapping (parent, child) to joint object
-            - links: dict mapping link_name to link object
-
+        A tuple containing:
+        - tree: Dictionary mapping parent link names to lists of (child_name, joint_name, joint_type).
+        - root_link: The name of the root link (link with no parent), or None if not found.
+        - joints: Dictionary mapping (parent_name, child_name) tuples to the joint Object.
+        - links: Dictionary mapping link names to their Blender Objects.
     """
+    if not scene:
+        return {}, None, {}, {}
     # Collect all links
-    links = {obj.linkforge.link_name: obj for obj in scene.objects if obj.linkforge.is_robot_link}
+    links = {
+        obj.linkforge.link_name: obj
+        for obj in scene.objects
+        if hasattr(obj, "linkforge") and typing.cast(typing.Any, obj).linkforge.is_robot_link
+    }
 
     # Build parent->children mapping from joints
-    tree = {link_name: [] for link_name in links}
+    tree: dict[str, list[tuple[str, str, str]]] = {link_name: [] for link_name in links}
     joints = {}
     root_link = None
 
     for obj in scene.objects:
-        if obj.type == "EMPTY" and obj.linkforge_joint.is_robot_joint:
-            props = obj.linkforge_joint
+        if (
+            obj.type == "EMPTY"
+            and hasattr(obj, "linkforge_joint")
+            and typing.cast(typing.Any, obj).linkforge_joint.is_robot_joint
+        ):
+            props = typing.cast(typing.Any, obj).linkforge_joint
             parent = props.parent_link
             child = props.child_link
 
@@ -62,18 +86,28 @@ class LINKFORGE_OT_select_tree_object(Operator):
     bl_description = "Select this object in the 3D viewport"
     bl_options = {"REGISTER", "UNDO"}
 
-    object_name: bpy.props.StringProperty(
+    object_name = bpy.props.StringProperty(  # type: ignore[func-returns-value]
         name="Object Name", description="Name of the object to select"
-    )  # type: ignore
-    object_type: bpy.props.StringProperty(
-        name="Object Type", description="Type of object (link, joint, sensor, transmission)"
-    )  # type: ignore
+    )
+    joint_name = StringProperty(name="Joint Name")  # type: ignore[func-returns-value]
+    parent_link = StringProperty(name="Parent Link")  # type: ignore[func-returns-value]
+    child_link = StringProperty(name="Child Name")  # type: ignore[func-returns-value]
 
     @safe_execute
-    def execute(self, context):
-        """Execute the operator."""
+    def execute(self, context: Context) -> set[str]:
+        """Execute the operator.
+
+        Args:
+            context: The execution context.
+
+        Returns:
+            Set containing the execution state (e.g., {'FINISHED'} or {'CANCELLED'}).
+        """
         # Find the object
-        obj = context.scene.objects.get(self.object_name)
+        scene = context.scene
+        if not scene:
+            return {"CANCELLED"}
+        obj = scene.objects.get(self.object_name)
         if not obj:
             self.report({"WARNING"}, f"Object '{self.object_name}' not found")
             return {"CANCELLED"}
@@ -82,10 +116,52 @@ class LINKFORGE_OT_select_tree_object(Operator):
         bpy.ops.object.select_all(action="DESELECT")
 
         # Select and activate the object
+        # Select and activate the object
         obj.select_set(True)
-        context.view_layer.objects.active = obj
+        vl = context.view_layer
+        if vl:
+            vl.objects.active = obj
 
         return {"FINISHED"}
+
+
+class LINKFORGE_OT_select_root_link(Operator):
+    """Select the root link of the robot."""
+
+    bl_idname = "linkforge.select_root_link"
+    bl_label = "Select Root Link"
+    bl_description = "Select the root link of the robot in the 3D viewport"
+    bl_options = {"REGISTER", "UNDO"}
+
+    @safe_execute
+    def execute(self, context: Context) -> set[str]:
+        """Execute the operator.
+
+        Args:
+            context: The execution context.
+
+        Returns:
+            Set containing the execution state (e.g., {'FINISHED'} or {'CANCELLED'}).
+        """
+        scene = context.scene
+        if not scene:
+            return {"CANCELLED"}
+        _, root_link, _, _ = build_tree_structure(scene)
+
+        # Select the root link
+        if root_link:
+            root_obj = scene.objects.get(root_link)
+            if root_obj:
+                bpy.ops.object.select_all(action="DESELECT")
+                root_obj.select_set(True)
+                vl = context.view_layer
+                if vl:
+                    vl.objects.active = root_obj
+
+            return {"FINISHED"}
+        else:
+            self.report({"WARNING"}, "No root link found for the robot.")
+            return {"CANCELLED"}
 
 
 # Registration
@@ -94,7 +170,7 @@ classes = [
 ]
 
 
-def register():
+def register() -> None:
     """Register panel."""
     for cls in classes:
         try:
@@ -104,7 +180,7 @@ def register():
             bpy.utils.register_class(cls)
 
 
-def unregister():
+def unregister() -> None:
     """Unregister panel."""
     for cls in reversed(classes):
         with contextlib.suppress(RuntimeError):

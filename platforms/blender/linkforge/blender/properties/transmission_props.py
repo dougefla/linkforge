@@ -6,15 +6,24 @@ for ros2_control integration.
 
 from __future__ import annotations
 
+import typing
+
 import bpy
 from bpy.props import BoolProperty, EnumProperty, FloatProperty, PointerProperty, StringProperty
-from bpy.types import PropertyGroup
+from bpy.types import Context, PropertyGroup
 
 from ..utils.property_helpers import find_property_owner
 
 
-def get_transmission_name(self):
-    """Getter for transmission_name - mirrors and sanitizes the Blender object name."""
+def get_transmission_name(self: typing.Any) -> str:
+    """Getter for transmission_name.
+
+    Args:
+        self: The property group instance.
+
+    Returns:
+        The sanitized Blender object name.
+    """
     if not self.id_data:
         return ""
 
@@ -23,8 +32,13 @@ def get_transmission_name(self):
     return sanitize_urdf_name(self.id_data.name)
 
 
-def set_transmission_name(self, value):
-    """Setter for transmission_name - updates object name."""
+def set_transmission_name(self: typing.Any, value: str) -> None:
+    """Setter for transmission_name.
+
+    Args:
+        self: The property group instance.
+        value: The new name to set.
+    """
     if not value or not self.id_data:
         return
 
@@ -36,14 +50,15 @@ def set_transmission_name(self, value):
         self.id_data.name = sanitized_name
 
 
-def update_transmission_hierarchy(self, context):
+def update_transmission_hierarchy(self: typing.Any, context: Context) -> None:
     """Update Blender object hierarchy when joint changes.
 
     Automatically reparents transmission to new joint and moves to joint's collection.
     This ensures visual hierarchy matches logical structure.
 
-    For simple transmissions: uses joint_obj
-    For differential transmissions: uses joint1_obj (first joint)
+    Args:
+        self: The property group instance.
+        context: The current Blender context.
     """
     # Find the transmission object that owns this property
     transmission_obj = find_property_owner(context, self, "linkforge_transmission")
@@ -79,8 +94,16 @@ def update_transmission_hierarchy(self, context):
         clear_parent_keep_transform(transmission_obj)
 
 
-def poll_robot_joint(self, obj):
-    """Filter to only allow robot joint objects in pointer selection."""
+def poll_robot_joint(self: typing.Any, obj: bpy.types.Object) -> bool:
+    """Filter to only allow robot joint objects in pointer selection.
+
+    Args:
+        self: The property group instance.
+        obj: The object to check.
+
+    Returns:
+        True if the object is a valid robot joint.
+    """
     return bool(obj and hasattr(obj, "linkforge_joint") and obj.linkforge_joint.is_robot_joint)
 
 
@@ -208,7 +231,7 @@ class TransmissionPropertyGroup(PropertyGroup):
 
 
 # Registration
-def register():
+def register() -> None:
     """Register property group."""
     try:
         bpy.utils.register_class(TransmissionPropertyGroup)
@@ -217,17 +240,15 @@ def register():
         bpy.utils.unregister_class(TransmissionPropertyGroup)
         bpy.utils.register_class(TransmissionPropertyGroup)
 
-    bpy.types.Object.linkforge_transmission = bpy.props.PointerProperty(
-        type=TransmissionPropertyGroup
-    )
+    bpy.types.Object.linkforge_transmission = PointerProperty(type=TransmissionPropertyGroup)  # type: ignore
 
 
-def unregister():
+def unregister() -> None:
     """Unregister property group."""
     import contextlib
 
     with contextlib.suppress(AttributeError):
-        del bpy.types.Object.linkforge_transmission
+        del bpy.types.Object.linkforge_transmission  # type: ignore
 
     with contextlib.suppress(RuntimeError):
         bpy.utils.unregister_class(TransmissionPropertyGroup)

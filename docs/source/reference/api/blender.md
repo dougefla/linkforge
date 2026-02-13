@@ -38,6 +38,52 @@ User actions and commands.
    :members:
    :undoc-members:
    :show-inheritance:
+
+.. automodule:: linkforge.blender.operators.transmission_ops
+   :members:
+   :undoc-members:
+   :show-inheritance:
+```
+
+## Panels
+
+UI Panels for managing robot data.
+
+```{eval-rst}
+.. automodule:: linkforge.blender.panels.forge_panel
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. automodule:: linkforge.blender.panels.robot_panel
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. automodule:: linkforge.blender.panels.link_panel
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. automodule:: linkforge.blender.panels.joint_panel
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. automodule:: linkforge.blender.panels.sensor_panel
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. automodule:: linkforge.blender.panels.control_panel
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. automodule:: linkforge.blender.panels.export_panel
+   :members:
+   :undoc-members:
+   :show-inheritance:
 ```
 
 ## Properties
@@ -66,6 +112,11 @@ Blender scene properties for storing robot data.
    :show-inheritance:
 
 .. automodule:: linkforge.blender.properties.control_props
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. automodule:: linkforge.blender.properties.transmission_props
    :members:
    :undoc-members:
    :show-inheritance:
