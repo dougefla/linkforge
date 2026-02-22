@@ -9,6 +9,7 @@ from __future__ import annotations
 import copy
 import json
 import math
+import os
 import re
 import sys
 import xml.etree.ElementTree as ET
@@ -445,6 +446,11 @@ class XacroResolver:
         if not isinstance(value, str):
             return value
 
+        # yaml.safe_load("") returns None, so empty strings must be returned as-is
+        # before YAML parsing to avoid corrupting args with empty defaults.
+        if value == "":
+            return value
+
         # Try YAML (most robust and standard compliant)
         try:
             # safe_load handles ints, floats, bools (true/false), nulls, lists, dicts
@@ -475,11 +481,32 @@ class XacroResolver:
         # 1. Handle arguments: $(arg name)
         text = re.sub(r"\$\(arg (.*?)\)", lambda m: str(self.args.get(m.group(1), "")), text)
 
-        # 2. Handle ROS package find: $(find package)
-        # Note: We convert this to the package:// URI scheme commonly used in URDF.
+        # 2. Handle environment variable substitution, matching roslaunch behaviour.
+        # $(env VAR) raises if unset; $(optenv VAR) returns ""; $(optenv VAR default) returns default.
+        def _resolve_env(m: re.Match[str]) -> str:
+            parts = m.group(1).split(None, 1)
+            var = parts[0]
+            value = os.environ.get(var)
+            if value is None:
+                raise RobotParserError(f"Required environment variable '{var}' is not set")
+            return value
+
+        def _resolve_optenv(m: re.Match[str]) -> str:
+            parts = m.group(1).split(None, 1)
+            var = parts[0]
+            default = parts[1] if len(parts) > 1 else ""
+            return os.environ.get(var, default)
+
+        text = re.sub(r"\$\(env (.*?)\)", _resolve_env, text)
+        text = re.sub(r"\$\(optenv (.*?)\)", _resolve_optenv, text)
+
+        # 3. Handle ROS package find: $(find package) → package:// URI.
+        # The file:// form must be matched first so that `file://$(find pkg)/path`
+        # does not produce the malformed double-prefix `file://package://pkg/path`.
+        text = re.sub(r"file://\$\(find (.*?)\)", lambda m: f"package://{m.group(1)}", text)
         text = re.sub(r"\$\(find (.*?)\)", lambda m: f"package://{m.group(1)}", text)
 
-        # 3. Handle properties and math: ${expression}
+        # 4. Handle properties and math: ${expression}
         # If the entire string is a single ${...} block, return the object directly.
         # This keeps dicts/lists as real objects for subsequent evaluations.
         stripped = text.strip()
@@ -635,9 +662,10 @@ class XACROParser(RobotParser):
             start_dir=kwargs.get("start_dir", filepath.parent),
         )
 
-        # Pass additional kwargs as initial xacro arguments
+        # Forward caller-supplied args to the resolver, skipping internal keys
+        # and None values (str(None) would override xacro defaults like default="").
         for k, v in kwargs.items():
-            if k not in ["search_paths"]:
+            if k not in ["search_paths", "start_dir"] and v is not None:
                 resolver.args[k] = resolver._try_parse_typed_value(str(v))
 
         urdf_string = resolver.resolve_file(filepath)

@@ -1046,3 +1046,56 @@ class TestXACROParserEdgeCoverage:
             self._write_and_parse(xml, tmp_path)
         # The parser should log something about the missing file
         assert any("no/such" in r.message or "include" in r.message.lower() for r in caplog.records)
+
+
+def test_substitute_handles_file_uri_find_pattern():
+    """Verify that file://$(find pkg)/path is converted to package://pkg/path."""
+    resolver = XacroResolver()
+
+    result = resolver._substitute("file://$(find my_robot)/meshes/base.stl")
+    assert result == "package://my_robot/meshes/base.stl"
+
+    # Plain $(find ...) must still work too
+    result2 = resolver._substitute("$(find my_robot)/meshes/base.stl")
+    assert result2 == "package://my_robot/meshes/base.stl"
+
+
+def test_xacro_parser_skips_none_kwargs(tmp_path):
+    """Verify that None-valued kwargs do not override xacro arg defaults."""
+    xacro_file = tmp_path / "robot.xacro"
+    xacro_file.write_text(
+        '<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="test_robot">'
+        '<xacro:arg name="prefix" default=""/>'
+        '<link name="${prefix}link_0"/>'
+        "</robot>"
+    )
+
+    parser = XACROParser()
+    robot = parser.parse(xacro_file, prefix=None)
+    assert "link_0" in [link.name for link in robot.links]
+
+
+def test_substitute_optenv(monkeypatch):
+    """Verify $(optenv VAR default) resolves from environment, with fallback."""
+    resolver = XacroResolver()
+
+    monkeypatch.setenv("MY_VAR", "hello")
+    assert resolver._substitute("$(optenv MY_VAR fallback)") == "hello"
+
+    monkeypatch.delenv("MY_VAR", raising=False)
+    assert resolver._substitute("$(optenv MY_VAR fallback)") == "fallback"
+    assert resolver._substitute("$(optenv MY_VAR)") == ""
+
+
+def test_substitute_env(monkeypatch):
+    """Verify $(env VAR) resolves a set variable and raises when unset."""
+    from linkforge_core.base import RobotParserError
+
+    resolver = XacroResolver()
+
+    monkeypatch.setenv("MY_VAR", "world")
+    assert resolver._substitute("$(env MY_VAR)") == "world"
+
+    monkeypatch.delenv("MY_VAR", raising=False)
+    with pytest.raises(RobotParserError, match="MY_VAR"):
+        resolver._substitute("$(env MY_VAR)")
