@@ -65,7 +65,14 @@ class LINKFORGE_PT_joints(Panel):
 
         # Joint properties
         box = layout.box()
-        box.label(text=f"Joint: {obj.name}", icon="EMPTY_ARROWS")
+        box.label(text=f"Joint: {props.joint_name}", icon="EMPTY_ARROWS")
+
+        # Display Blender object name if it differs from persistent joint name
+        if obj.name != props.joint_name:
+            sub = box.row()
+            sub.active = False
+            sub.label(text=f"Blender Obj: {obj.name}", icon="INFO")
+
         box.prop(props, "joint_name")
 
         # Joint type
