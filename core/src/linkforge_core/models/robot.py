@@ -6,6 +6,7 @@ of truth for all kinematic, physical, and sensor data.
 
 from __future__ import annotations
 
+import copy
 from collections.abc import Sequence
 from dataclasses import InitVar, dataclass, field
 from pathlib import Path
@@ -105,13 +106,18 @@ class Robot:
         if initial_semantic:
             self._semantic = initial_semantic
 
-        # Build indices
+        self._reindex()
+
+    def _reindex(self) -> None:
+        """Rebuild internal lookup indices and clear cache."""
+        # Validate link names and build index
         self._link_index = {}
         for link in self._links:
             if link.name in self._link_index:
                 raise RobotValidationError("LinkName", link.name, "Duplicate found in index")
             self._link_index[link.name] = link
 
+        # Validate joint names and build index
         self._joint_index = {}
         for joint in self._joints:
             if joint.name in self._joint_index:
@@ -120,6 +126,148 @@ class Robot:
 
         self._sensor_index = {sensor.name: sensor for sensor in self._sensors}
         self._graph_cache = None
+
+    def clone(self) -> Robot:
+        """Create a deep copy of the robot.
+
+        Returns:
+            A new Robot instance with identical links, joints, and metadata.
+        """
+        return copy.deepcopy(self)
+
+    def prefix_all(self, prefix: str) -> None:
+        """Add a prefix to all links, joints, sensors, and related elements.
+
+        This is used when merging robots into an assembly to prevent
+        name collisions.
+
+        Args:
+            prefix: The string to prepend to all names.
+        """
+        if not prefix:
+            return
+
+        from dataclasses import replace
+
+        # 1. Update Links (Mutable)
+        for link in self._links:
+            link.name = f"{prefix}{link.name}"
+
+        # 2. Update Joints (Frozen)
+        new_joints = []
+        for joint in self._joints:
+            new_joint = replace(
+                joint,
+                name=f"{prefix}{joint.name}",
+                parent=f"{prefix}{joint.parent}",
+                child=f"{prefix}{joint.child}",
+            )
+            if joint.mimic:
+                new_joint = replace(
+                    new_joint,
+                    mimic=replace(joint.mimic, joint=f"{prefix}{joint.mimic.joint}"),
+                )
+            new_joints.append(new_joint)
+        self._joints = new_joints
+
+        # 3. Update Sensors (Frozen)
+        new_sensors = []
+        for sensor in self._sensors:
+            new_sensor = replace(
+                sensor,
+                name=f"{prefix}{sensor.name}",
+                link_name=f"{prefix}{sensor.link_name}",
+            )
+            if sensor.contact_info:
+                new_sensor = replace(
+                    new_sensor,
+                    contact_info=replace(
+                        sensor.contact_info,
+                        collision=f"{prefix}{sensor.contact_info.collision}",
+                    ),
+                )
+            new_sensors.append(new_sensor)
+        self._sensors = new_sensors
+
+        # 4. Update Transmissions (Frozen)
+        new_transmissions = []
+        for trans in self._transmissions:
+            new_trans = replace(
+                trans,
+                name=f"{prefix}{trans.name}",
+                joints=[replace(tj, name=f"{prefix}{tj.name}") for tj in trans.joints],
+                actuators=[replace(ta, name=f"{prefix}{ta.name}") for ta in trans.actuators],
+            )
+            new_transmissions.append(new_trans)
+        self._transmissions = new_transmissions
+
+        # 5. Update ROS2 Controls (Mutable)
+        for rc in self._ros2_controls:
+            rc.name = f"{prefix}{rc.name}"
+            for rc_joint in rc.joints:
+                rc_joint.name = f"{prefix}{rc_joint.name}"
+
+        # 6. Update Gazebo Elements (Frozen)
+        new_gazebo_elements = []
+        for ge in self._gazebo_elements:
+            new_ge = replace(ge, reference=f"{prefix}{ge.reference}" if ge.reference else None)
+            new_gazebo_elements.append(new_ge)
+        self._gazebo_elements = new_gazebo_elements
+
+        # 7. Update Semantic Description (Frozen)
+        if self._semantic:
+            s = self._semantic
+            self._semantic = replace(
+                s,
+                virtual_joints=[
+                    replace(
+                        vj,
+                        name=f"{prefix}{vj.name}",
+                        child_link=f"{prefix}{vj.child_link}",
+                    )
+                    for vj in s.virtual_joints
+                ],
+                groups=[
+                    replace(
+                        g,
+                        name=f"{prefix}{g.name}",
+                        links=[f"{prefix}{link_name}" for link_name in g.links],
+                        joints=[f"{prefix}{joint_name}" for joint_name in g.joints],
+                        chains=[
+                            (f"{prefix}{base_name}", f"{prefix}{tip_name}")
+                            for base_name, tip_name in g.chains
+                        ],
+                        subgroups=[f"{prefix}{subgroup_name}" for subgroup_name in g.subgroups],
+                    )
+                    for g in s.groups
+                ],
+                group_states=[
+                    replace(
+                        gs,
+                        name=f"{prefix}{gs.name}",
+                        group=f"{prefix}{gs.group}",
+                        joint_values={f"{prefix}{k}": v for k, v in gs.joint_values.items()},
+                    )
+                    for gs in s.group_states
+                ],
+                end_effectors=[
+                    replace(
+                        ee,
+                        name=f"{prefix}{ee.name}",
+                        group=f"{prefix}{ee.group}",
+                        parent_link=f"{prefix}{ee.parent_link}",
+                        parent_group=f"{prefix}{ee.parent_group}" if ee.parent_group else None,
+                    )
+                    for ee in s.end_effectors
+                ],
+                passive_joints=[replace(pj, name=f"{prefix}{pj.name}") for pj in s.passive_joints],
+                disabled_collisions=[
+                    replace(dc, link1=f"{prefix}{dc.link1}", link2=f"{prefix}{dc.link2}")
+                    for dc in s.disabled_collisions
+                ],
+            )
+
+        self._reindex()
 
     def add_link(self, link: Link) -> None:
         """Add a link to the robot and update indices."""
