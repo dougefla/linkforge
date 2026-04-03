@@ -6,6 +6,11 @@
 import os
 import sys
 import typing
+import warnings
+
+# Silence third-party deprecation warnings (e.g., from sphinx_autodoc_typehints)
+# that break the build when Sphinx is run with the -W (warnings-as-errors) flag.
+warnings.filterwarnings("ignore", category=DeprecationWarning, module="sphinx_autodoc_typehints")
 
 sys.path.insert(0, os.path.abspath("../../core/src"))  # For linkforge_core
 sys.path.insert(0, os.path.abspath("../../platforms/blender"))  # For linkforge (blender)
@@ -13,7 +18,7 @@ sys.path.insert(0, os.path.abspath("../../platforms/blender"))  # For linkforge 
 # -- Project information -----------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
 
-from linkforge_core import __version__
+from linkforge_core import __version__  # noqa: E402
 
 project = "LinkForge"
 copyright = "2026, Arouna Patouossa Mounchili"  # noqa: A001
@@ -93,12 +98,12 @@ napoleon_include_special_with_doc = True
 napoleon_use_admonition_for_examples = True
 napoleon_use_admonition_for_notes = True
 napoleon_use_admonition_for_references = False
-napoleon_use_ivar = False
+napoleon_use_ivar = True
 napoleon_use_param = True
 napoleon_use_rtype = True
 napoleon_preprocess_types = True
 napoleon_type_aliases = None
-napoleon_attr_annotations = True
+napoleon_attr_annotations = False
 
 # Autodoc settings
 autodoc_default_options = {
