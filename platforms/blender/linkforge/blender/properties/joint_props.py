@@ -168,23 +168,23 @@ def _get_custom_axis_vector(props: JointPropertyGroup) -> Vector:
 
 def _capture_rest_state(props: JointPropertyGroup, obj: bpy.types.Object) -> None:
     """Snapshot the current local rotation & location as the zero-position reference."""
-    props._rest_rotation_x = obj.rotation_euler[0]
-    props._rest_rotation_y = obj.rotation_euler[1]
-    props._rest_rotation_z = obj.rotation_euler[2]
-    props._rest_location_x = obj.location[0]
-    props._rest_location_y = obj.location[1]
-    props._rest_location_z = obj.location[2]
-    props._rest_initialized = True
+    props.rest_rotation_x = obj.rotation_euler[0]
+    props.rest_rotation_y = obj.rotation_euler[1]
+    props.rest_rotation_z = obj.rotation_euler[2]
+    props.rest_location_x = obj.location[0]
+    props.rest_location_y = obj.location[1]
+    props.rest_location_z = obj.location[2]
+    props.rest_initialized = True
 
 
 def _apply_joint_transform(props: JointPropertyGroup, obj: bpy.types.Object) -> None:
     """Set the joint Empty's local transform based on joint_position and rest state."""
     pos = props.joint_position
     rest_rot = Euler(
-        (props._rest_rotation_x, props._rest_rotation_y, props._rest_rotation_z), "XYZ"
+        (props.rest_rotation_x, props.rest_rotation_y, props.rest_rotation_z), "XYZ"
     )
     rest_loc = Vector(
-        (props._rest_location_x, props._rest_location_y, props._rest_location_z)
+        (props.rest_location_x, props.rest_location_y, props.rest_location_z)
     )
 
     if props.joint_type in {"REVOLUTE", "CONTINUOUS"}:
@@ -258,7 +258,7 @@ def on_joint_position_update(self: JointPropertyGroup, context: Context) -> None
         return
 
     # Auto-capture rest state on first use
-    if not self._rest_initialized:
+    if not self.rest_initialized:
         _capture_rest_state(self, joint_obj)
 
     # Clamp to limits
@@ -533,18 +533,18 @@ class JointPropertyGroup(PropertyGroup):
     )
 
     # Hidden rest-state storage
-    _rest_initialized: BoolProperty(  # type: ignore
+    rest_initialized: BoolProperty(  # type: ignore
         name="Rest Initialized",
         default=False,
         options={"HIDDEN"},
     )
 
-    _rest_rotation_x: FloatProperty(default=0.0, options={"HIDDEN"})  # type: ignore
-    _rest_rotation_y: FloatProperty(default=0.0, options={"HIDDEN"})  # type: ignore
-    _rest_rotation_z: FloatProperty(default=0.0, options={"HIDDEN"})  # type: ignore
-    _rest_location_x: FloatProperty(default=0.0, options={"HIDDEN"})  # type: ignore
-    _rest_location_y: FloatProperty(default=0.0, options={"HIDDEN"})  # type: ignore
-    _rest_location_z: FloatProperty(default=0.0, options={"HIDDEN"})  # type: ignore
+    rest_rotation_x: FloatProperty(default=0.0, options={"HIDDEN"})  # type: ignore
+    rest_rotation_y: FloatProperty(default=0.0, options={"HIDDEN"})  # type: ignore
+    rest_rotation_z: FloatProperty(default=0.0, options={"HIDDEN"})  # type: ignore
+    rest_location_x: FloatProperty(default=0.0, options={"HIDDEN"})  # type: ignore
+    rest_location_y: FloatProperty(default=0.0, options={"HIDDEN"})  # type: ignore
+    rest_location_z: FloatProperty(default=0.0, options={"HIDDEN"})  # type: ignore
 
 
 # Registration

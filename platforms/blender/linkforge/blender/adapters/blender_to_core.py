@@ -1110,7 +1110,7 @@ def scene_to_robot(
     _saved_positions: list[tuple[Any, float]] = []
     for jobj in joint_objects:
         jprops = getattr(jobj, "linkforge_joint", None)
-        if jprops and jprops._rest_initialized and jprops.joint_position != 0.0:
+        if jprops and jprops.rest_initialized and jprops.joint_position != 0.0:
             _saved_positions.append((jprops, jprops.joint_position))
             jprops.joint_position = 0.0
 
