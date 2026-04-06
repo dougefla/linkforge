@@ -1105,6 +1105,19 @@ def scene_to_robot(
         _categorize_scene_objects(scene)
     )
 
+    # Temporarily reset all driven joints to rest pose so that
+    # link_frames and joint origins reflect the URDF rest state.
+    _saved_positions: list[tuple[Any, float]] = []
+    for jobj in joint_objects:
+        jprops = getattr(jobj, "linkforge_joint", None)
+        if jprops and jprops._rest_initialized and jprops.joint_position != 0.0:
+            _saved_positions.append((jprops, jprops.joint_position))
+            jprops.joint_position = 0.0
+
+    # Force depsgraph update so matrix_world values reflect the reset
+    if _saved_positions:
+        context.view_layer.update()
+
     # Calculate link coordinate frames
     link_frames = _calculate_link_frames(link_objects, joints_map, root_link)
 
@@ -1223,6 +1236,12 @@ def scene_to_robot(
         raise RobotValidationError(
             "RobotConversion", robot_name, f"Multiple configuration errors found:\n{error_summary}"
         )
+
+    # Restore driven joint positions after export conversion
+    if _saved_positions:
+        for jprops, saved_pos in _saved_positions:
+            jprops.joint_position = saved_pos
+        context.view_layer.update()
 
     return robot, conversion_errors
 

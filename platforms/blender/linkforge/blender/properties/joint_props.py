@@ -16,6 +16,7 @@ from bpy.props import (
     StringProperty,
 )
 from bpy.types import Context, PropertyGroup
+from mathutils import Euler, Matrix, Vector
 
 if typing.TYPE_CHECKING:
     from .link_props import LinkPropertyGroup
@@ -143,6 +144,133 @@ def poll_robot_joint(self: JointPropertyGroup, obj: bpy.types.Object) -> bool:
     # find_property_owner is imported at the top
     current_obj = find_property_owner(bpy.context, self, "linkforge_joint")
     return bool(obj != current_obj)
+
+
+# --- Joint Drive helpers ---
+
+# Guard against infinite recursion when propagating mimic joints
+_mimic_propagation_active: set[int] = set()
+
+
+def _get_axis_index(axis: str) -> int | None:
+    """Return 0/1/2 for X/Y/Z, None for CUSTOM."""
+    return {"X": 0, "Y": 1, "Z": 2}.get(axis)
+
+
+def _get_custom_axis_vector(props: JointPropertyGroup) -> Vector:
+    """Return the normalised custom axis vector."""
+    v = Vector((props.custom_axis_x, props.custom_axis_y, props.custom_axis_z))
+    if v.length < 1e-8:
+        return Vector((0.0, 0.0, 1.0))
+    v.normalize()
+    return v
+
+
+def _capture_rest_state(props: JointPropertyGroup, obj: bpy.types.Object) -> None:
+    """Snapshot the current local rotation & location as the zero-position reference."""
+    props._rest_rotation_x = obj.rotation_euler[0]
+    props._rest_rotation_y = obj.rotation_euler[1]
+    props._rest_rotation_z = obj.rotation_euler[2]
+    props._rest_location_x = obj.location[0]
+    props._rest_location_y = obj.location[1]
+    props._rest_location_z = obj.location[2]
+    props._rest_initialized = True
+
+
+def _apply_joint_transform(props: JointPropertyGroup, obj: bpy.types.Object) -> None:
+    """Set the joint Empty's local transform based on joint_position and rest state."""
+    pos = props.joint_position
+    rest_rot = Euler(
+        (props._rest_rotation_x, props._rest_rotation_y, props._rest_rotation_z), "XYZ"
+    )
+    rest_loc = Vector(
+        (props._rest_location_x, props._rest_location_y, props._rest_location_z)
+    )
+
+    if props.joint_type in {"REVOLUTE", "CONTINUOUS"}:
+        idx = _get_axis_index(props.axis)
+        if idx is not None:
+            # Standard axis — just offset the corresponding Euler component
+            new_rot = list(rest_rot)
+            new_rot[idx] = rest_rot[idx] + pos
+            obj.rotation_euler = Euler(new_rot, "XYZ")
+            obj.location = rest_loc
+        else:
+            # CUSTOM axis — compose via matrices
+            axis_vec = _get_custom_axis_vector(props)
+            rest_mat = rest_rot.to_matrix().to_4x4()
+            drive_mat = Matrix.Rotation(pos, 4, axis_vec)
+            result_mat = rest_mat @ drive_mat
+            obj.rotation_euler = result_mat.to_euler("XYZ")
+            obj.location = rest_loc
+
+    elif props.joint_type == "PRISMATIC":
+        idx = _get_axis_index(props.axis)
+        if idx is not None:
+            new_loc = list(rest_loc)
+            new_loc[idx] = rest_loc[idx] + pos
+            obj.location = Vector(new_loc)
+        else:
+            axis_vec = _get_custom_axis_vector(props)
+            obj.location = rest_loc + pos * axis_vec
+        obj.rotation_euler = rest_rot
+
+
+def _propagate_mimic(props: JointPropertyGroup, context: Context) -> None:
+    """Update all joints that mimic the given joint."""
+    joint_obj = find_property_owner(context, props, "linkforge_joint")
+    if joint_obj is None:
+        return
+
+    obj_id = id(joint_obj)
+    if obj_id in _mimic_propagation_active:
+        return  # break recursion
+    _mimic_propagation_active.add(obj_id)
+
+    try:
+        scene = context.scene
+        if not scene:
+            return
+        for obj in scene.objects:
+            if obj.type != "EMPTY" or obj == joint_obj:
+                continue
+            follower = getattr(obj, "linkforge_joint", None)
+            if (
+                follower
+                and follower.is_robot_joint
+                and follower.use_mimic
+                and follower.mimic_joint == joint_obj
+            ):
+                follower.joint_position = (
+                    props.joint_position * follower.mimic_multiplier + follower.mimic_offset
+                )
+    finally:
+        _mimic_propagation_active.discard(obj_id)
+
+
+def on_joint_position_update(self: JointPropertyGroup, context: Context) -> None:
+    """Callback when joint_position slider changes."""
+    if self.joint_type in {"FIXED", "FLOATING", "PLANAR"}:
+        return
+
+    joint_obj = find_property_owner(context, self, "linkforge_joint")
+    if joint_obj is None:
+        return
+
+    # Auto-capture rest state on first use
+    if not self._rest_initialized:
+        _capture_rest_state(self, joint_obj)
+
+    # Clamp to limits
+    if self.joint_type in {"REVOLUTE", "PRISMATIC"} or (
+        self.joint_type == "CONTINUOUS" and self.use_limits
+    ):
+        clamped = max(self.limit_lower, min(self.limit_upper, self.joint_position))
+        if clamped != self.joint_position:
+            self["joint_position"] = clamped
+
+    _apply_joint_transform(self, joint_obj)
+    _propagate_mimic(self, context)
 
 
 class JointPropertyGroup(PropertyGroup):
@@ -393,6 +521,30 @@ class JointPropertyGroup(PropertyGroup):
         description="Whether to include the falling edge in calibration",
         default=False,
     )
+
+    # --- Joint Drive ---
+    joint_position: FloatProperty(  # type: ignore
+        name="Joint Position",
+        description="Current position of the joint (radians for revolute, meters for prismatic)",
+        default=0.0,
+        soft_min=-6.28318530718,
+        soft_max=6.28318530718,
+        update=on_joint_position_update,
+    )
+
+    # Hidden rest-state storage
+    _rest_initialized: BoolProperty(  # type: ignore
+        name="Rest Initialized",
+        default=False,
+        options={"HIDDEN"},
+    )
+
+    _rest_rotation_x: FloatProperty(default=0.0, options={"HIDDEN"})  # type: ignore
+    _rest_rotation_y: FloatProperty(default=0.0, options={"HIDDEN"})  # type: ignore
+    _rest_rotation_z: FloatProperty(default=0.0, options={"HIDDEN"})  # type: ignore
+    _rest_location_x: FloatProperty(default=0.0, options={"HIDDEN"})  # type: ignore
+    _rest_location_y: FloatProperty(default=0.0, options={"HIDDEN"})  # type: ignore
+    _rest_location_z: FloatProperty(default=0.0, options={"HIDDEN"})  # type: ignore
 
 
 # Registration

@@ -120,6 +120,21 @@ class LINKFORGE_PT_joints(Panel):
                 col.prop(props, "limit_velocity")
         # FIXED/FLOATING/PLANAR: No limits section (not allowed per URDF spec)
 
+        # Joint Drive (only for moveable joints)
+        if props.joint_type in {"REVOLUTE", "CONTINUOUS", "PRISMATIC"}:
+            box.separator()
+            drive_box = box.box()
+            drive_box.label(text="Drive Joint:", icon="CON_ROTLIKE")
+
+            if props.joint_type in {"REVOLUTE", "CONTINUOUS"}:
+                drive_box.prop(props, "joint_position", text="Angle", slider=True)
+            else:
+                drive_box.prop(props, "joint_position", text="Distance", slider=True)
+
+            row = drive_box.row(align=True)
+            row.operator("linkforge.reset_all_joints", icon="LOOP_BACK", text="Reset All")
+            row.operator("linkforge.capture_rest_pose", icon="CHECKMARK", text="Capture Rest")
+
         # Joint Dynamics settings (optional)
         box.separator()
         box.prop(props, "use_dynamics")

@@ -744,6 +744,12 @@ def create_joint_object(
         child_obj.rotation_mode = "XYZ"
         child_obj.location = (0, 0, 0)
         child_obj.rotation_euler = (0, 0, 0)
+
+        # Capture rest state for joint driving
+        from ..properties.joint_props import _capture_rest_state
+
+        if hasattr(empty, "linkforge_joint"):
+            _capture_rest_state(empty.linkforge_joint, empty)
     else:
         logger.error(
             f"Failed to parent joint '{joint.name}': "

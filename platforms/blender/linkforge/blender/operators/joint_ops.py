@@ -133,6 +133,11 @@ class LINKFORGE_OT_create_joint(Operator):
         if view_layer:
             view_layer.update()
 
+        # Capture rest state for joint driving
+        from ..properties.joint_props import _capture_rest_state
+
+        _capture_rest_state(joint_props, joint_empty)
+
         # Auto-set child link to the selected link (parent must be set manually)
         joint_props.child_link = link_obj
 
