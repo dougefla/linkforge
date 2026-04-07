@@ -21,13 +21,41 @@ You are an expert robotics engineer assembling articulated furniture objects fro
 - BlenderMCP server must be started (port 9876)
 - The MCP tools `mcp__blender__execute_blender_code` and `mcp__blender__get_viewport_screenshot` must be available
 
+## Reference Thumbnail
+
+The input directory contains a ground-truth reference image named `threequarter_nobg.png` — a 512x512 Cycles render of the **correctly assembled** model with transparent background. Camera parameters:
+- Elevation: 25° above horizontal, Azimuth: 45° from front (front-right 3/4 view)
+- Camera distance: 1.8x scene extent, Perspective projection
+
+**This image is critical.** Before starting assembly, use the `Read` tool to view this image. Throughout the workflow, compare your Blender viewport screenshots against this reference to:
+1. Understand the target assembled state (which parts go where, how doors/drawers are oriented)
+2. Determine part roles (the reference shows the closed/rest pose — identify doors, drawers, shelves from the assembled view)
+3. Validate assembly correctness (your assembled model should visually match this reference)
+4. Detect errors (any deviation from the reference indicates a problem with joint placement, axis, or hierarchy)
+
 ## Workflow Overview
 
-Execute these 5 phases sequentially. Each phase uses MCP tools to interact with Blender. Break Blender code into small focused calls (one logical step per call). Analyze screenshots between steps to make decisions.
+Execute these 5 phases sequentially. Each phase uses MCP tools to interact with Blender. Break Blender code into small focused calls (one logical step per call). Analyze screenshots between steps to make decisions. **Always compare against `threequarter_nobg.png` as ground truth.**
 
 ---
 
 ## Phase 1: Import & Visual Analysis
+
+### Step 1.0: Load Reference Image
+
+Use the `Read` tool to view the reference thumbnail:
+```
+Read $1/threequarter_nobg.png
+```
+
+Analyze this image carefully:
+1. What type of furniture is this? (cabinet, desk, wardrobe, shelf unit, etc.)
+2. How is it oriented? Which face is the front?
+3. Which parts are doors, drawers, shelves, handles?
+4. Where are the hinge/pivot points for moveable parts?
+5. What is the overall structure and how parts connect?
+
+Keep this mental model throughout all subsequent phases.
 
 ### Step 1.1: Clear Scene
 
@@ -115,37 +143,66 @@ print(json.dumps(parts, indent=2))
 
 ### Step 1.4: Multi-Angle Screenshots
 
-Position the 3D viewport to frame all objects, then take screenshots from 4 angles. Use `mcp__blender__get_viewport_screenshot` after each camera repositioning.
+Position the 3D viewport to match the reference image angle (25° elevation, 45° azimuth front-right), then take a screenshot for comparison:
 
 ```python
 import bpy
-from mathutils import Quaternion
-from math import radians
+from mathutils import Vector, Euler
+from math import radians, sin, cos
 
-# Frame all objects
-for area in bpy.context.screen.areas:
-    if area.type == 'VIEW_3D':
-        for region in area.regions:
-            if region.type == 'WINDOW':
-                with bpy.context.temp_override(area=area, region=region):
-                    bpy.ops.view3d.view_all()
-        # Set perspective view
-        area.spaces[0].region_3d.view_perspective = 'PERSP'
+# Compute scene bounding box center and extent
+all_objs = [o for o in bpy.context.scene.objects if o.type == 'MESH']
+if all_objs:
+    all_bb = []
+    for o in all_objs:
+        all_bb.extend([o.matrix_world @ Vector(c) for c in o.bound_box])
+    scene_min = Vector((min(v.x for v in all_bb), min(v.y for v in all_bb), min(v.z for v in all_bb)))
+    scene_max = Vector((max(v.x for v in all_bb), max(v.y for v in all_bb), max(v.z for v in all_bb)))
+    center = (scene_min + scene_max) / 2
+    extent = (scene_max - scene_min).length
+    dist = extent * 1.8
+
+    # Camera angles matching reference: elevation 25°, azimuth 45°
+    elev = radians(25)
+    azim = radians(45)
+    cam_x = center.x + dist * cos(elev) * sin(azim)
+    cam_y = center.y - dist * cos(elev) * cos(azim)
+    cam_z = center.z + dist * sin(elev)
+
+    for area in bpy.context.screen.areas:
+        if area.type == 'VIEW_3D':
+            r3d = area.spaces[0].region_3d
+            r3d.view_perspective = 'PERSP'
+            r3d.view_location = center
+            r3d.view_distance = dist
+            # Set rotation to match elevation/azimuth
+            r3d.view_rotation = Euler((radians(90 - 25), 0, radians(45))).to_quaternion()
+            break
+
+print(f"Camera set: center={center}, dist={dist:.2f}")
 ```
 
-Take screenshot with `mcp__blender__get_viewport_screenshot`, then analyze the image.
+Take screenshot with `mcp__blender__get_viewport_screenshot`.
 
-**Visual Analysis**: Look at the screenshots and determine:
-1. What type of furniture is this? (cabinet, desk, wardrobe, shelf unit, etc.)
+**Compare against reference `threequarter_nobg.png`**: The screenshot should show the same parts from a similar angle. Check:
+1. Are all parts present and correctly imported?
+2. Do the imported parts' positions match the reference (already assembled) or are they scattered?
+3. Cross-reference each visible part in the reference with the imported geometry data.
+
+Also take additional angle screenshots (front, side, top) if needed for better understanding.
+
+**Visual Analysis** (combining reference + imported screenshots):
+1. What type of furniture is this? (confirmed from reference image)
 2. How many distinct parts are visible?
-3. Which parts appear movable? (doors, drawers, lids)
-4. What is the general orientation? (which way is "front"?)
+3. Which parts appear movable? (doors, drawers, lids — visible in the reference as distinct panels)
+4. What is the general orientation? (front face identified from reference)
+5. How should each part be positioned relative to the body? (derive from reference)
 
 ---
 
 ## Phase 2: Part Classification
 
-Using the geometry data from Step 1.3 and the visual analysis from Step 1.4, classify each part.
+Using the reference image (`threequarter_nobg.png`), the geometry data from Step 1.3, and the viewport screenshots from Step 1.4, classify each part. **The reference image is the primary guide** — geometry heuristics are secondary confirmation.
 
 ### Classification Decision Tree
 
@@ -382,6 +439,9 @@ After setting each position, call `mcp__blender__get_viewport_screenshot` and an
 
 ### Visual Check Criteria
 
+**At rest pose (0%), compare against `threequarter_nobg.png`** — the assembled model at rest must visually match the reference image. Set the viewport to the same 25° elevation / 45° azimuth angle and compare. Any mismatch indicates incorrect part placement or joint origin.
+
+At other positions (25%-100%), check for:
 1. **Interpenetration**: Any part passing through another part? Look for overlapping geometry.
 2. **Gaps**: Are parts that should be flush showing visible separation?
 3. **Wrong Axis**: Does the movement direction look correct? A door should swing, not slide.
