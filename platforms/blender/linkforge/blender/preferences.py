@@ -14,6 +14,8 @@ from bpy.types import AddonPreferences, Context
 
 def update_joint_axes_visibility(_self: LinkForgePreferences, _context: Context) -> None:
     """Callback when show_joint_axes changes - manage draw handler and force viewport redraw."""
+    if bpy.app.background:
+        return
     from .visualization import joint_gizmos
 
     joint_gizmos.update_viz_handle(_context)
@@ -21,12 +23,6 @@ def update_joint_axes_visibility(_self: LinkForgePreferences, _context: Context)
 
 def update_joint_empty_size(self: LinkForgePreferences, context: Context) -> None:
     """Callback when joint_empty_size changes - update all joint empties and viewport."""
-    # From here, we also need to trigger the draw handler update check
-    # so the GPU overlay picks up the new size immediately
-    from .visualization import joint_gizmos
-
-    joint_gizmos.update_viz_handle(context)
-
     # Update all existing joint empties in the scene
     if context.scene:
         for obj in context.scene.objects:
@@ -36,6 +32,14 @@ def update_joint_empty_size(self: LinkForgePreferences, context: Context) -> Non
                 and obj.linkforge_joint.is_robot_joint
             ):
                 obj.empty_display_size = self.joint_empty_size
+
+    if bpy.app.background:
+        return
+
+    # Trigger draw handler update for GPU overlay
+    from .visualization import joint_gizmos
+
+    joint_gizmos.update_viz_handle(context)
 
     # Force viewport redraw
     if context.window_manager:
@@ -47,11 +51,8 @@ def update_joint_empty_size(self: LinkForgePreferences, context: Context) -> Non
 
 def update_sensor_empty_size(self: LinkForgePreferences, context: Context) -> None:
     """Callback when sensor_empty_size changes - update all sensor empties."""
-
-    # Get new size
     new_size = self.sensor_empty_size
 
-    # Update all existing sensor empties in the scene
     if context.scene:
         for obj in context.scene.objects:
             if (
@@ -61,7 +62,8 @@ def update_sensor_empty_size(self: LinkForgePreferences, context: Context) -> No
             ):
                 obj.empty_display_size = new_size
 
-    # Force viewport redraw
+    if bpy.app.background:
+        return
     if context.window_manager:
         for window in context.window_manager.windows:
             for area in window.screen.areas:
@@ -71,17 +73,15 @@ def update_sensor_empty_size(self: LinkForgePreferences, context: Context) -> No
 
 def update_link_empty_size(self: LinkForgePreferences, context: Context) -> None:
     """Callback when link_empty_size changes - update all link empties."""
-
-    # Get new size
     new_size = self.link_empty_size
 
-    # Update all existing link empties in the scene
     if context.scene:
         for obj in context.scene.objects:
             if obj.type == "EMPTY" and hasattr(obj, "linkforge") and obj.linkforge.is_robot_link:
                 obj.empty_display_size = new_size
 
-    # Force viewport redraw
+    if bpy.app.background:
+        return
     if context.window_manager:
         for window in context.window_manager.windows:
             for area in window.screen.areas:
@@ -91,16 +91,19 @@ def update_link_empty_size(self: LinkForgePreferences, context: Context) -> None
 
 def update_inertia_visibility(_self: LinkForgePreferences, _context: Context) -> None:
     """Callback when show_inertia_gizmos changes."""
+    if bpy.app.background:
+        return
     from .visualization import inertia_gizmos
 
     inertia_gizmos.tag_redraw()
-    # If the user just enabled it, make sure the handler is registered
     if _self.show_inertia_gizmos:
         inertia_gizmos.ensure_inertia_handler()
 
 
 def update_inertia_size(_self: LinkForgePreferences, _context: Context) -> None:
     """Callback when inertia_gizmo_size changes."""
+    if bpy.app.background:
+        return
     from .visualization import inertia_gizmos
 
     inertia_gizmos.tag_redraw()

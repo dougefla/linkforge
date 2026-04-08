@@ -8,19 +8,28 @@ This module contains all Blender-specific code:
 
 from __future__ import annotations
 
-from . import handlers, operators, panels, preferences, properties
-from .visualization import inertia_gizmos, joint_gizmos
+import bpy
+
+from . import handlers, operators, preferences, properties
+
+# GUI-only modules are skipped in headless (--background) mode
+_is_headless = bpy.app.background
+
+if not _is_headless:
+    from . import panels
+    from .visualization import inertia_gizmos, joint_gizmos
 
 # Registration order matters: properties first, then operators, then panels, then gizmos
 modules = [
     properties,
     preferences,
     operators,
-    panels,
-    joint_gizmos,
-    inertia_gizmos,
-    handlers,
 ]
+
+if not _is_headless:
+    modules += [panels, joint_gizmos, inertia_gizmos]
+
+modules.append(handlers)
 
 
 def register() -> None:
