@@ -9,6 +9,26 @@ Metadata is defined in blender_manifest.toml at the root of the extension.
 from __future__ import annotations
 
 # Blender Extension Entry Point
+import sys
+from pathlib import Path
+
+
+# --- Health Checks ---
+def _check_health() -> bool:
+    """Verify the extension environment and dependencies."""
+    # Since we no longer inject sys.path globally, we verify
+    # dependencies via local relative imports.
+    try:
+        from . import linkforge_core  # noqa: F401
+
+        return True
+    except ImportError as e:
+        print(f"LinkForge Initialization Warning: Core dependencies not found ({e}).")
+        print("This extension must be installed as a Blender Extension package.")
+        return False
+
+
+_check_health()
 
 # Import blender module if bpy is available (inside Blender)
 try:

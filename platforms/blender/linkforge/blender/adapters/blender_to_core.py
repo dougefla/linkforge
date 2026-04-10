@@ -26,9 +26,9 @@ else:
 
 from dataclasses import dataclass
 
-from linkforge_core.exceptions import RobotValidationError, ValidationErrorCode
-from linkforge_core.logging_config import get_logger
-from linkforge_core.models import (
+from ...linkforge_core.exceptions import RobotValidationError, ValidationErrorCode
+from ...linkforge_core.logging_config import get_logger
+from ...linkforge_core.models import (
     Box,
     CameraInfo,
     Collision,
@@ -64,17 +64,20 @@ from linkforge_core.models import (
     Vector3,
     Visual,
 )
-from linkforge_core.models.transmission import (
+from ...linkforge_core.models.transmission import (
     Transmission,
     TransmissionActuator,
     TransmissionJoint,
     TransmissionType,
 )
-from linkforge_core.physics import calculate_inertia, calculate_mesh_inertia_from_triangles
-from linkforge_core.utils.math_utils import clean_float, normalize_vector
-from linkforge_core.utils.string_utils import sanitize_name
-
-from linkforge.blender.utils.physics import calculate_mesh_inertia_numpy
+from ...linkforge_core.physics import (
+    calculate_inertia,
+    calculate_mesh_inertia_from_triangles,
+    validate_mesh_topology,
+)
+from ...linkforge_core.utils.math_utils import clean_float, normalize_vector
+from ...linkforge_core.utils.string_utils import sanitize_name
+from ..utils.physics import calculate_mesh_inertia_numpy
 
 # Constants
 logger = get_logger(__name__)
@@ -635,6 +638,8 @@ def blender_link_to_core_with_origin(
 
                     if mesh_data:
                         vertices, triangles = mesh_data
+                        # Mandatory topology validation for mesh inertia
+                        validate_mesh_topology(triangles, name=geom_obj.name)
                         if use_numpy:
                             # Vectorized implementation
                             inertia_tensor = calculate_mesh_inertia_numpy(
@@ -1236,7 +1241,7 @@ def scene_to_robot(
                         parameters=params,
                     )
                     # Note: We wrap the plugin in a GazeboElement without a reference (global)
-                    from linkforge_core.models.gazebo import GazeboElement
+                    from ...linkforge_core.models.gazebo import GazeboElement
 
                     robot.add_gazebo_element(GazeboElement(plugins=[gazebo_plugin]))
         except Exception as e:

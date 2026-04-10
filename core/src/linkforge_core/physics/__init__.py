@@ -10,10 +10,11 @@ from .inertia import (
     calculate_box_inertia,
     calculate_cylinder_inertia,
     calculate_inertia,
-    calculate_mesh_inertia,
+    calculate_mesh_inertia_approximation,
     calculate_mesh_inertia_from_triangles,
     calculate_sphere_inertia,
 )
+from .mesh_validation import validate_mesh_topology
 
 __all__ = [
     # Inertia
@@ -21,6 +22,8 @@ __all__ = [
     "calculate_box_inertia",
     "calculate_cylinder_inertia",
     "calculate_sphere_inertia",
-    "calculate_mesh_inertia",
+    "calculate_mesh_inertia_approximation",
     "calculate_mesh_inertia_from_triangles",
+    # Validation
+    "validate_mesh_topology",
 ]
