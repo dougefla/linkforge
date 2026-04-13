@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from enum import Enum
 
@@ -47,7 +48,6 @@ class CameraInfo:
 
     def __post_init__(self) -> None:
         """Validate camera parameters."""
-        import math
 
         # Standard pinhole cameras support FOV up to 180° (π radians)
         # For FOV > 180°, use wideanglecamera sensor type instead
