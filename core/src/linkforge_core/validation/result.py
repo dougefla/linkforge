@@ -6,6 +6,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
 
+from ..exceptions import ValidationErrorCode
+
 
 class Severity(Enum):
     """Severity level of a validation issue."""
@@ -33,6 +35,7 @@ class ValidationIssue:
     message: str
     affected_objects: list[str] = field(default_factory=list)
     suggestion: str | None = None
+    code: ValidationErrorCode | None = None
     auto_fix: Callable[[], None] | None = None
 
     @property
@@ -48,8 +51,9 @@ class ValidationIssue:
     def __str__(self) -> str:
         """String representation."""
         prefix = "ERROR" if self.is_error else "WARNING"
+        code_str = f" [{self.code.name}]" if self.code else ""
         objects = f" [{', '.join(self.affected_objects)}]" if self.affected_objects else ""
-        return f"{prefix}: {self.title}{objects} - {self.message}"
+        return f"{prefix}{code_str}: {self.title}{objects} - {self.message}"
 
 
 @dataclass
@@ -98,6 +102,7 @@ class ValidationResult:
         message: str,
         affected_objects: list[str] | None = None,
         suggestion: str | None = None,
+        code: ValidationErrorCode | None = None,
         auto_fix: Callable[[], None] | None = None,
     ) -> None:
         """Add an error to the validation result."""
@@ -108,6 +113,7 @@ class ValidationResult:
                 message=message,
                 affected_objects=affected_objects or [],
                 suggestion=suggestion,
+                code=code,
                 auto_fix=auto_fix,
             )
         )
@@ -118,6 +124,7 @@ class ValidationResult:
         message: str,
         affected_objects: list[str] | None = None,
         suggestion: str | None = None,
+        code: ValidationErrorCode | None = None,
         auto_fix: Callable[[], None] | None = None,
     ) -> None:
         """Add a warning to the validation result."""
@@ -128,6 +135,7 @@ class ValidationResult:
                 message=message,
                 affected_objects=affected_objects or [],
                 suggestion=suggestion,
+                code=code,
                 auto_fix=auto_fix,
             )
         )
