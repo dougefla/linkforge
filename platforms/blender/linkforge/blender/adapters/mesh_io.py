@@ -9,10 +9,9 @@ from pathlib import Path
 from typing import Any
 
 import bpy
+from linkforge_core.logging_config import get_logger
+from linkforge_core.utils.string_utils import sanitize_name
 from mathutils import Matrix, Vector
-
-from ...linkforge_core.logging_config import get_logger
-from ...linkforge_core.utils.string_utils import sanitize_name
 
 logger = get_logger(__name__)
 
@@ -45,7 +44,7 @@ def export_mesh_stl(obj: Any, filepath: Path) -> bool:
 
         bpy.ops.object.select_all(action="DESELECT")
         obj.select_set(True)
-        if bpy.context.view_layer:
+        if bpy.context.view_layer is not None:
             bpy.context.view_layer.objects.active = obj
 
         # Export to STL
@@ -103,7 +102,7 @@ def export_mesh_obj(obj: Any, filepath: Path) -> bool:
 
         bpy.ops.object.select_all(action="DESELECT")
         obj.select_set(True)
-        if bpy.context.view_layer:
+        if bpy.context.view_layer is not None:
             bpy.context.view_layer.objects.active = obj
 
         # Export to OBJ
@@ -169,7 +168,7 @@ def create_simplified_mesh(obj: Any, decimation_ratio: float) -> Any | None:
     # Apply the modifier
     bpy.ops.object.select_all(action="DESELECT")
     simplified_obj.select_set(True)
-    if bpy.context.view_layer:
+    if bpy.context.view_layer is not None:
         bpy.context.view_layer.objects.active = simplified_obj
     bpy.ops.object.modifier_apply(modifier=decimate_mod.name)
 
@@ -224,7 +223,7 @@ def export_mesh_glb(obj: Any, filepath: Path) -> bool:
 
         bpy.ops.object.select_all(action="DESELECT")
         obj.select_set(True)
-        if bpy.context.view_layer:
+        if bpy.context.view_layer is not None:
             bpy.context.view_layer.objects.active = obj
 
         # Export to GLB

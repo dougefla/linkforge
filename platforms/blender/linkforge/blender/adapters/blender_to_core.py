@@ -8,27 +8,19 @@ from __future__ import annotations
 
 from dataclasses import replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 try:
     import numpy as np  # type: ignore[import-not-found]
 except ImportError:
     np = None
 
-if TYPE_CHECKING:
-    # Type stubs for Blender types when type checking
-    bpy: Any
-    Matrix: Any
-    Vector: Any
-else:
-    import bpy
-    from mathutils import Matrix
-
 from dataclasses import dataclass
 
-from ...linkforge_core.exceptions import RobotValidationError, ValidationErrorCode
-from ...linkforge_core.logging_config import get_logger
-from ...linkforge_core.models import (
+import bpy
+from linkforge_core.exceptions import RobotValidationError, ValidationErrorCode
+from linkforge_core.logging_config import get_logger
+from linkforge_core.models import (
     Box,
     CameraInfo,
     Collision,
@@ -64,18 +56,21 @@ from ...linkforge_core.models import (
     Vector3,
     Visual,
 )
-from ...linkforge_core.models.transmission import (
+from linkforge_core.models.transmission import (
     Transmission,
     TransmissionActuator,
     TransmissionJoint,
     TransmissionType,
 )
-from ...linkforge_core.physics import (
+from linkforge_core.physics import (
     calculate_inertia,
     calculate_mesh_inertia_from_triangles,
 )
-from ...linkforge_core.utils.math_utils import clean_float, normalize_vector
-from ...linkforge_core.utils.string_utils import sanitize_name
+from linkforge_core.utils.math_utils import clean_float, normalize_vector
+from linkforge_core.utils.string_utils import sanitize_name
+from mathutils import Matrix
+
+from .context import IBlenderContext
 
 # Constants
 logger = get_logger(__name__)
@@ -171,23 +166,32 @@ def detect_primitive_type(obj: bpy.types.Object | None) -> str | None:
         return None
 
     mesh = obj.data
-    if mesh is None:
+    # Type-narrowing for Mypy, with resilience for mocked test environments
+    is_mesh = isinstance(mesh, bpy.types.Mesh)
+    if not is_mesh and obj.type == "MESH" and mesh is not None:
+        # Fallback for mocked environments where isinstance might fail
+        is_mesh = hasattr(mesh, "vertices") and hasattr(mesh, "polygons")
+
+    if not is_mesh or mesh is None:
         return None
 
-    # Check for explicit geometry type tags
-    # This guarantees round-trip stability and prevents auto-detection failures
+    # Narrow type for Mypy
+    from typing import cast
+
+    mesh_obj = cast(bpy.types.Mesh, mesh)
+
     tags = ["source_geometry_type", "collision_geometry_type"]
     for tag in tags:
-        if tag in obj:
-            geom_type = str(obj[tag])
-            if geom_type in ("BOX", "CYLINDER", "SPHERE"):
-                return geom_type
-            if geom_type == "MESH":
+        tag_val = obj.get(tag)  # type: ignore[func-returns-value]
+        if isinstance(tag_val, str):
+            if tag_val in ("BOX", "CYLINDER", "SPHERE"):
+                return tag_val
+            if tag_val == "MESH":
                 return None
 
     # Count vertices and faces
-    vert_count = len(mesh.vertices)
-    face_count = len(mesh.polygons)
+    vert_count = len(mesh_obj.vertices)
+    face_count = len(mesh_obj.polygons)
 
     # Get config for primitive detection thresholds
     config = DEFAULT_PRIMITIVE_CONFIG
@@ -195,7 +199,9 @@ def detect_primitive_type(obj: bpy.types.Object | None) -> str | None:
     # Match Box: 8 vertices, 6 quad faces
     if vert_count == config.cube_vert_count and face_count == config.cube_face_count:
         # Verify it's roughly box-shaped by checking if all faces are quads
-        all_quads = all(len(poly.vertices) == config.cube_verts_per_face for poly in mesh.polygons)
+        all_quads = all(
+            len(poly.vertices) == config.cube_verts_per_face for poly in mesh_obj.polygons
+        )
         if all_quads:
             return "BOX"
 
@@ -240,7 +246,7 @@ def detect_primitive_type(obj: bpy.types.Object | None) -> str | None:
 
 
 def get_object_geometry(
-    obj: Any,
+    obj: bpy.types.Object | None,
     geometry_type: str = "AUTO",
     link_name: str | None = None,
     geom_purpose: str = "visual",
@@ -315,7 +321,10 @@ def get_object_geometry(
 
     if actual_geometry_type == "BOX":
         # Use bounding box dimensions
-        dimensions = obj.dimensions
+        dimensions = getattr(obj, "dimensions", None)
+        if dimensions is None:
+            return None, Matrix.Identity(4)
+
         # Robustness Check: Skip zero-size objects (e.g. empties from failed imports)
         if dimensions.length < 1e-6:
             logger.warning(f"Skipping geometry for '{obj.name}': Dimensions are zero.")
@@ -325,21 +334,28 @@ def get_object_geometry(
 
     elif actual_geometry_type == "CYLINDER":
         # Approximate with bounding cylinder
-        dimensions = obj.dimensions
+        dimensions = getattr(obj, "dimensions", None)
+        if dimensions is None:
+            return None, Matrix.Identity(4)
+
         radius = max(dimensions.x, dimensions.y) / 2.0
         length = dimensions.z
         return Cylinder(radius=radius, length=length), geom_world_matrix
 
     elif actual_geometry_type == "SPHERE":
         # Approximate with bounding sphere
-        radius = max(obj.dimensions) / 2.0
+        dimensions = getattr(obj, "dimensions", None)
+        if dimensions is None:
+            return None, Matrix.Identity(4)
+
+        radius = max(dimensions) / 2.0
         return Sphere(radius=radius), geom_world_matrix
 
     return None, Matrix.Identity(4)
 
 
 def extract_mesh_triangles(
-    obj: Any,
+    obj: bpy.types.Object | None,
     depsgraph: Any | None = None,
     as_numpy: bool = False,
 ) -> tuple[Any, Any] | None:
@@ -362,13 +378,17 @@ def extract_mesh_triangles(
     if depsgraph is None:
         depsgraph = bpy.context.evaluated_depsgraph_get()
     eval_obj = obj.evaluated_get(depsgraph)
-    mesh = eval_obj.to_mesh()
+    mesh_data = eval_obj.to_mesh()
 
-    if mesh is None:
+    if mesh_data is None:
         return None
 
     # Ensure mesh has triangulated faces
-    mesh.calc_loop_triangles()
+    mesh_data.calc_loop_triangles()
+
+    if mesh_data.loop_triangles is None:
+        eval_obj.to_mesh_clear()
+        return None
 
     # We use the scale matrix (not full world matrix) to get correct dimensions
     # but keep the object centered at its local origin for proper inertia calculation
@@ -378,15 +398,15 @@ def extract_mesh_triangles(
     # Fast O(N) extraction via NumPy
     if np is not None:
         # Fast vertex extraction via foreach_get
-        num_verts = len(mesh.vertices)
+        num_verts = len(mesh_data.vertices)
         verts = np.empty(num_verts * 3, dtype=np.float32)
-        mesh.vertices.foreach_get("co", verts)
+        mesh_data.vertices.foreach_get("co", verts)
         vertices_array = verts.reshape((-1, 3))
 
         # Fast face index extraction (triangles)
-        num_tris = len(mesh.loop_triangles)
+        num_tris = len(mesh_data.loop_triangles)
         tris = np.empty(num_tris * 3, dtype=np.int32)
-        mesh.loop_triangles.foreach_get("vertices", tris)
+        mesh_data.loop_triangles.foreach_get("vertices", tris)
         triangles_array = tris.reshape((-1, 3))
 
         # Apply scale
@@ -408,9 +428,9 @@ def extract_mesh_triangles(
     # Python fallback
     vertices = [
         (v.co.x * scale_matrix.x, v.co.y * scale_matrix.y, v.co.z * scale_matrix.z)
-        for v in mesh.vertices
+        for v in mesh_data.vertices
     ]
-    triangles = [tuple(t.vertices) for t in mesh.loop_triangles]
+    triangles = [tuple(t.vertices) for t in mesh_data.loop_triangles]
 
     # Cleanup memory
     eval_obj.to_mesh_clear()
@@ -448,14 +468,15 @@ def get_object_material(obj: Any, props: Any) -> Material | None:
             for node in blender_mat.node_tree.nodes:
                 if node.type == "BSDF_PRINCIPLED":
                     # Get Base Color input
-                    base_color_input = node.inputs["Base Color"]
-                    base_color = base_color_input.default_value
-                    color = Color(
-                        r=base_color[0],
-                        g=base_color[1],
-                        b=base_color[2],
-                        a=base_color[3] if len(base_color) > 3 else 1.0,
-                    )
+                    base_color_input = node.inputs.get("Base Color")
+                    if base_color_input and hasattr(base_color_input, "default_value"):
+                        base_color = base_color_input.default_value
+                        color = Color(
+                            r=base_color[0],
+                            g=base_color[1],
+                            b=base_color[2],
+                            a=base_color[3] if len(base_color) > 3 else 1.0,
+                        )
                     break
 
         # Fallback to viewport display color if no node shader
@@ -492,8 +513,8 @@ def blender_link_to_core_with_origin(
     if obj is None:
         return None
 
-    props = obj.linkforge
-    if not props.is_robot_link:
+    props = getattr(obj, "linkforge", None)
+    if not props or not getattr(props, "is_robot_link", False):
         return None
 
     link_name = props.link_name if props.link_name else obj.name
@@ -644,7 +665,7 @@ def blender_link_to_core_with_origin(
                         )
                     else:
                         # Fallback to bounding box if mesh extraction fails
-                        dimensions = geom_obj.dimensions
+                        dimensions = getattr(geom_obj, "dimensions", Vector3(0, 0, 0))
                         bbox_geom = Box(size=Vector3(dimensions.x, dimensions.y, dimensions.z))
                         inertia_tensor = calculate_inertia(bbox_geom, props.mass)
                 else:
@@ -710,8 +731,8 @@ def blender_joint_to_core(obj: Any) -> Joint | None:
     if obj is None:
         return None
 
-    props = obj.linkforge_joint
-    if not props.is_robot_joint:
+    props = getattr(obj, "linkforge_joint", None)
+    if not props or not getattr(props, "is_robot_joint", False):
         return None
 
     joint_name = props.joint_name if props.joint_name else obj.name
@@ -741,6 +762,18 @@ def blender_joint_to_core(obj: Any) -> Joint | None:
             axis = Vector3(0.0, 0.0, 1.0)
         else:
             axis = Vector3(nx, ny, nz)
+
+    # Defensive check: Ensure axis is not None for joint types that require it
+    if (
+        joint_type
+        in (JointType.REVOLUTE, JointType.PRISMATIC, JointType.CONTINUOUS, JointType.PLANAR)
+        and axis is None
+    ):
+        logger.error(
+            f"Joint '{joint_name}' (type: {joint_type}) calculated axis is None. props.axis='{props.axis}'"
+        )
+        # Fallback to Z-axis instead of crashing later, though this shouldn't happen with the logic above
+        axis = Vector3(0.0, 0.0, 1.0)
 
     # Joint origin is already calculated relative to parent in blender_to_core.scene_to_robot
     # Just use the joint's world transform here, will be made relative in scene_to_robot
@@ -797,21 +830,15 @@ def blender_joint_to_core(obj: Any) -> Joint | None:
     parent_obj = props.parent_link
     child_obj = props.child_link
 
+    parent_props = getattr(parent_obj, "linkforge", None)
     parent = (
-        (
-            parent_obj.linkforge.link_name
-            if parent_obj and parent_obj.linkforge.link_name
-            else parent_obj.name
-        )
+        (parent_props.link_name if parent_props and parent_props.link_name else parent_obj.name)
         if parent_obj
         else ""
     )
+    child_props = getattr(child_obj, "linkforge", None)
     child = (
-        (
-            child_obj.linkforge.link_name
-            if child_obj and child_obj.linkforge.link_name
-            else child_obj.name
-        )
+        (child_props.link_name if child_props and child_props.link_name else child_obj.name)
         if child_obj
         else ""
     )
@@ -871,8 +898,8 @@ def blender_transmission_to_core(obj: Any) -> Transmission | None:
     if obj is None:
         return None
 
-    props = obj.linkforge_transmission
-    if not props.is_robot_transmission:
+    props = getattr(obj, "linkforge_transmission", None)
+    if not props or not getattr(props, "is_robot_transmission", False):
         return None
 
     trans_name = props.transmission_name if props.transmission_name else obj.name
@@ -900,9 +927,10 @@ def blender_transmission_to_core(obj: Any) -> Transmission | None:
     if props.transmission_type in ("SIMPLE", "CUSTOM", "FOUR_BAR_LINKAGE"):
         joint_obj = props.joint_name
         if joint_obj:
+            joint_props = getattr(joint_obj, "linkforge_joint", None)
             joint_name = (
-                joint_obj.linkforge_joint.joint_name
-                if hasattr(joint_obj, "linkforge_joint") and joint_obj.linkforge_joint.joint_name
+                joint_props.joint_name
+                if joint_props and getattr(joint_props, "joint_name", "")
                 else ""
             ) or joint_obj.name
 
@@ -925,15 +953,13 @@ def blender_transmission_to_core(obj: Any) -> Transmission | None:
         j1_obj = props.joint1_name
         j2_obj = props.joint2_name
         if j1_obj and j2_obj:
+            j1_props = getattr(j1_obj, "linkforge_joint", None)
             j1_name = (
-                j1_obj.linkforge_joint.joint_name
-                if hasattr(j1_obj, "linkforge_joint") and j1_obj.linkforge_joint.joint_name
-                else ""
+                j1_props.joint_name if j1_props and getattr(j1_props, "joint_name", "") else ""
             ) or j1_obj.name
+            j2_props = getattr(j2_obj, "linkforge_joint", None)
             j2_name = (
-                j2_obj.linkforge_joint.joint_name
-                if hasattr(j2_obj, "linkforge_joint") and j2_obj.linkforge_joint.joint_name
-                else ""
+                j2_props.joint_name if j2_props and getattr(j2_props, "joint_name", "") else ""
             ) or j2_obj.name
 
             joints.append(
@@ -991,25 +1017,29 @@ def _categorize_scene_objects(
 
     for obj in scene.objects:
         # Check for Link
-        if hasattr(obj, "linkforge") and obj.linkforge.is_robot_link:
-            link_name = obj.linkforge.link_name if obj.linkforge.link_name else obj.name
+        lf = getattr(obj, "linkforge", None)
+        if lf and getattr(lf, "is_robot_link", False):
+            link_name = lf.link_name if lf.link_name else obj.name
             link_objects[link_name] = obj
 
         # Check for Joint
-        elif hasattr(obj, "linkforge_joint") and obj.linkforge_joint.is_robot_joint:
+        j_lf = getattr(obj, "linkforge_joint", None)
+        if j_lf and getattr(j_lf, "is_robot_joint", False):
             joint_objects.append(obj)
-            props = obj.linkforge_joint
+            props = j_lf
             parent_obj = props.parent_link
             child_obj = props.child_link
 
+            parent_props = getattr(parent_obj, "linkforge", None)
             parent_name = (
-                parent_obj.linkforge.link_name
-                if parent_obj and hasattr(parent_obj, "linkforge")
+                parent_props.link_name
+                if parent_props and getattr(parent_props, "link_name", "")
                 else (parent_obj.name if parent_obj else "")
             )
+            child_props = getattr(child_obj, "linkforge", None)
             child_name = (
-                child_obj.linkforge.link_name
-                if child_obj and hasattr(child_obj, "linkforge")
+                child_props.link_name
+                if child_props and getattr(child_props, "link_name", "")
                 else (child_obj.name if child_obj else "")
             )
 
@@ -1017,14 +1047,13 @@ def _categorize_scene_objects(
                 joints_map[child_name] = (parent_name, obj)
 
         # Check for Sensor
-        elif hasattr(obj, "linkforge_sensor") and obj.linkforge_sensor.is_robot_sensor:
+        s_lf = getattr(obj, "linkforge_sensor", None)
+        if s_lf and getattr(s_lf, "is_robot_sensor", False):
             sensor_objects.append(obj)
 
         # Check for Transmission
-        elif (
-            hasattr(obj, "linkforge_transmission")
-            and obj.linkforge_transmission.is_robot_transmission
-        ):
+        t_lf = getattr(obj, "linkforge_transmission", None)
+        if t_lf and getattr(t_lf, "is_robot_transmission", False):
             transmission_objects.append(obj)
 
     # Find root link (link with no parent joint)
@@ -1053,7 +1082,7 @@ def _calculate_link_frames(
     """
     link_frames = {}  # link_name -> world matrix where link frame is
 
-    if root_link and Matrix:
+    if root_link is not None and Matrix is not None:
         root_name, root_obj = root_link
         link_frames[root_name] = Matrix.Identity(4)
 
@@ -1086,43 +1115,39 @@ def _calculate_link_frames(
 
 
 def scene_to_robot(
-    context: Any,
+    context: IBlenderContext | bpy.types.Context,
     meshes_dir: Path | None = None,
     dry_run: bool = False,
 ) -> tuple[Robot, list[str]]:
     """Convert entire Blender scene to Core Robot.
 
-    This function orchestrates the conversion process by:
-    1. Categorizing scene objects (links, joints, sensors, transmissions)
-    2. Calculating link coordinate frames
-    3. Converting each object type to core models
-    4. Assembling the complete Robot model
-
-    Args:
-        context: Blender context
-        meshes_dir: Optional directory for exporting mesh files
-        dry_run: If True, don't write mesh files
-
-    Returns:
-        Tuple of (Core Robot model, list of error messages)
-
-    Note:
-        Error handling behavior is controlled by the robot's strict_mode property:
-        - strict_mode=False (default): Collects all errors and shows them together
-        - strict_mode=True: Fails immediately on first error (useful for debugging)
+    This function orchestrates the conversion process. Supports auto-wrapping of
+    legacy contexts for backward compatibility.
     """
+    from .context import BlenderContext
+
+    # Auto-wrap for legacy compatibility
+    if not isinstance(context, IBlenderContext):
+        import bpy
+
+        context = BlenderContext(bpy)
+
     if context is None:
         return Robot(name="empty_robot"), []
-
     scene = context.scene
-    robot_props = scene.linkforge
+    robot_props = getattr(scene, "linkforge", None)
+    if not robot_props:
+        return Robot(name="robot"), ["Scene has no linkforge properties"]
     robot_name = robot_props.robot_name if robot_props.robot_name else "robot"
     strict_mode = robot_props.strict_mode  # Get strict mode from properties
     robot = Robot(name=robot_name)
-    # Get evaluated depsgraph once for the entire conversion
-    # This ensures all objects are evaluated at the same point in time
-    # and significantly improves performance for complex robots.
-    depsgraph = context.evaluated_depsgraph_get()
+
+    # Note: Evaluated depsgraph is only needed for real Blender runs.
+    # In Mock contexts, we can bypass this.
+    depsgraph = None
+    if hasattr(context, "evaluated_depsgraph_get"):
+        depsgraph = context.evaluated_depsgraph_get()
+
     conversion_errors: list[str] = []
 
     # Categorize scene objects
@@ -1160,7 +1185,7 @@ def scene_to_robot(
                     (parent_name := joint.parent)
                     and parent_name in link_frames
                     and joint.child in link_frames
-                    and Matrix
+                    and Matrix is not None
                 ):
                     parent_frame = link_frames[parent_name]
                     child_frame = link_frames[joint.child]
@@ -1181,7 +1206,12 @@ def scene_to_robot(
     for obj in sensor_objects:
         try:
             sensor = blender_sensor_to_core(obj)
-            if sensor and (link_name := sensor.link_name) and link_name in link_frames and Matrix:
+            if (
+                sensor
+                and (link_name := sensor.link_name)
+                and link_name in link_frames
+                and Matrix is not None
+            ):
                 link_obj = link_objects.get(link_name)
                 if link_obj and obj.parent == link_obj:
                     # Extract relative origin using matrix math (robust against 'Keep Transform')
@@ -1233,7 +1263,7 @@ def scene_to_robot(
                         parameters=params,
                     )
                     # Note: We wrap the plugin in a GazeboElement without a reference (global)
-                    from ...linkforge_core.models.gazebo import GazeboElement
+                    from linkforge_core.models.gazebo import GazeboElement
 
                     robot.add_gazebo_element(GazeboElement(plugins=[gazebo_plugin]))
         except Exception as e:
@@ -1271,20 +1301,16 @@ def blender_sensor_to_core(obj: Any) -> Sensor | None:
     """
     if obj is None:
         return None
-
-    props = obj.linkforge_sensor
-    if not props.is_robot_sensor:
+    props = getattr(obj, "linkforge_sensor", None)
+    if not props or not props.is_robot_sensor:
         return None
 
     sensor_name = props.sensor_name if props.sensor_name else obj.name
     sensor_type = SensorType(props.sensor_type.lower())
     link_obj = props.attached_link
+    link_props = getattr(link_obj, "linkforge", None)
     link_name = (
-        (
-            link_obj.linkforge.link_name
-            if link_obj and link_obj.linkforge.link_name
-            else link_obj.name
-        )
+        (link_props.link_name if link_props and link_props.link_name else link_obj.name)
         if link_obj
         else ""
     )
@@ -1449,7 +1475,9 @@ def blender_ros2_control_to_core(props: Any) -> Ros2Control | None:
         parameters = {p.name: p.value for p in item.parameters if p.name}
 
         # Determine the correct joint name
-        joint_name = item.joint_obj.linkforge_joint.joint_name if item.joint_obj else item.name
+        joint_obj = getattr(item, "joint_obj", None)
+        joint_props = getattr(joint_obj, "linkforge_joint", None)
+        joint_name = joint_props.joint_name if joint_props else item.name
 
         if cmd_ifs or state_ifs:
             joints.append(

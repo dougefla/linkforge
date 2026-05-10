@@ -665,17 +665,17 @@ class TestURDFParser:
     def test_xacro_detection_detailed(self, parser, tmp_path) -> None:
         """Test various XACRO artifacts triggering detection."""
 
-        # 1. Attribute substitution
+        # Attribute substitution
         with pytest.raises(XacroDetectedError, match="XACRO file detected"):
             parser.parse_string('<robot name="${name}"/>')
 
-        # 2. Xacro namespace in tag
+        # Xacro namespace in tag
         with pytest.raises(XacroDetectedError, match="XACRO file detected"):
             parser.parse_string(
                 '<robot xmlns:xacro="http://ros.org/wiki/xacro"><xacro:macro/></robot>'
             )
 
-        # 3. File content check
+        # File content check
         xacro_file = tmp_path / "test.urdf"
         xacro_file.write_text('<robot xmlns:xacro="http://..."/>')
 
@@ -684,7 +684,7 @@ class TestURDFParser:
 
     def test_invalid_values_and_defaults(self) -> None:
         """Test negative values and missing defaults logic."""
-        # 1. Negative inertia
+        # Negative inertia
         xml = """
         <robot name="bad_inertia">
             <link name="base">
@@ -753,11 +753,11 @@ class TestURDFParser:
 
     def test_security_exceptions(self, parser, tmp_path) -> None:
         """Test security exception re-raising."""
-        # 1. Package URI validation - Parse geometry swallows RobotModelError and returns None
+        # Package URI validation - Parse geometry swallows RobotModelError and returns None
         xml = '<geometry><mesh filename="package://../traversal"/></geometry>'
         assert parser._parse_geometry_element(ET.fromstring(xml), base_directory=tmp_path) is None
 
-        # 2. File URI validation - Parse geometry swallows RobotModelError and returns None
+        # File URI validation - Parse geometry swallows RobotModelError and returns None
         xml2 = '<geometry><mesh filename="file:///etc/passwd"/></geometry>'
         assert parser._parse_geometry_element(ET.fromstring(xml2), base_directory=tmp_path) is None
 
@@ -784,9 +784,9 @@ class TestURDFParser:
         assert sensor.gps_info.position_sensing_horizontal_noise.mean == 0.1
         assert sensor.gps_info.velocity_sensing_vertical_noise is None
 
-    def test_coverage_edge_cases(self, parser) -> None:
-        """Test remaining edge cases for 100% coverage."""
-        # 1. Parse Origin with values
+    def test_parse_origin_element(self, parser) -> None:
+        """Verify explicit parsing of individual origin elements."""
+        # Parse Origin with values
         xml = '<origin xyz="1 2 3" rpy="0.1 0.2 0.3"/>'
         origin = parser._parse_origin_element(ET.fromstring(xml))
         assert origin.xyz.x == 1.0
@@ -858,7 +858,7 @@ class TestURDFParser:
         assert isinstance(geom, Mesh)
         assert geom.scale.x == -1.0
 
-        # 3. Material Errors
+        # Material Errors
         # Invalid RGBA length
         xml = '<material name="bad"><color rgba="1 1"/></material>'
         assert parser._parse_material_element(ET.fromstring(xml), {}) is None
@@ -870,29 +870,29 @@ class TestURDFParser:
         xml = '<material name="empty"/>'
         assert parser._parse_material_element(ET.fromstring(xml), {}) is None
 
-        # 4. Transmission Errors
+        # Transmission Errors
         # Invalid mechanicalReduction
         xml = '<joint name="j1"><mechanicalReduction>not_number</mechanicalReduction></joint>'
         # parse_float raises RobotMathError for non-numeric strings
         with pytest.raises(RobotModelError, match="Invalid float format 'not_number'"):
             parser._parse_transmission_component(ET.fromstring(xml), "joint")
 
-        # 5. Gazebo Sensor missing reference
+        # Gazebo Sensor missing reference
         xml = '<gazebo><sensor name="s" type="camera"/></gazebo>'  # No reference attr
         assert parser._parse_sensor_from_gazebo(ET.fromstring(xml)) is None
 
-        # 6. Parse String errors
+        # Parse String errors
         parser = URDFParser()
         with pytest.raises(RobotParserError, match="Unexpected error in URDF XML"):
             parser.parse_string("<robot>unclosed tags")
 
-        # 7. Joint with explicit Axis
+        # Joint with explicit Axis
         xml = '<joint name="j1" type="continuous"><parent link="p"/><child link="c"/><axis xyz="0 1 0"/></joint>'
         joint = parser._parse_joint(ET.fromstring(xml))
         assert joint.axis is not None
         assert joint.axis.y == 1.0
 
-        # 8. Gazebo Plugin parsing
+        # Gazebo Plugin parsing
         xml = """
         <plugin name="p" filename="lib.so">
             <param>value</param>
@@ -905,7 +905,7 @@ class TestURDFParser:
         assert plugin.raw_xml is not None
         assert "<param>value</param>" in plugin.raw_xml
 
-        # 9. ROS2 Control misc parameters
+        # ROS2 Control misc parameters
         xml = """
         <ros2_control name="c" type="system">
             <hardware><plugin>H</plugin></hardware>
@@ -976,9 +976,7 @@ class TestURDFParser:
         ):
             parser.parse(path)
 
-
-class TestURDFParserEdgeCoverage:
-    """Parser behavior for sensors missing optional sub-elements."""
+    # Robustness and Edge Cases
 
     def test_parse_lidar_sensor_without_range_element(self) -> None:
         """Lidar sensor element missing a range sub-element uses default range values."""
@@ -1035,9 +1033,7 @@ class TestURDFParserEdgeCoverage:
         robot = parser.parse_string(xml)
         assert robot.name == "unnamed_robot"
 
-
-class TestURDFParserAdditionalEdgeCoverage:
-    """Parser behavior for inertial properties, transmissions, and mesh validation."""
+    # Mesh and Path Validation
 
     def test_mesh_path_validation_error_with_directory(self, tmp_path) -> None:
         """Non-package:// mesh path with source_directory triggers security validation."""
@@ -1145,9 +1141,7 @@ class TestURDFParserAdditionalEdgeCoverage:
         with pytest.raises(XacroDetectedError):
             parser.parse_string(xml)
 
-
-class TestURDFParserFileProtectionAndSensorCoverage:
-    """File size limits, ros2_control parameters, and IMU noise parsing."""
+    # System and Hardware Parameters
 
     def test_ros2_control_hardware_params_are_parsed(self) -> None:
         """Hardware <param> elements inside ros2_control are collected into the parameters dict."""

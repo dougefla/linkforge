@@ -13,7 +13,7 @@ from linkforge.blender.adapters.core_to_blender import (
     import_robot_to_scene,
     normalize_and_consolidate_imported_objects,
 )
-from linkforge.linkforge_core.models import (
+from linkforge_core.models import (
     Box,
     CameraInfo,
     Collision,
@@ -44,11 +44,19 @@ from linkforge.linkforge_core.models import (
     Visual,
 )
 
+from tests.blender_test_utils import (
+    create_test_object,
+    safe_get_joint,
+    safe_get_linkforge,
+    safe_get_linkforge_scene,
+    safe_get_sensor,
+)
 
-def test_create_primitive_mesh_box() -> None:
+
+def test_create_primitive_mesh_box(scene, blender_context) -> None:
     """Test creation of a real Blender Cube from Box model."""
     box = Box(size=Vector3(1, 2, 3))
-    obj = create_primitive_mesh(box, "test_box_unique")
+    obj = create_primitive_mesh(blender_context, box, "test_box_unique")
 
     assert obj is not None
     assert obj.name == "test_box_unique"
@@ -58,14 +66,15 @@ def test_create_primitive_mesh_box() -> None:
     assert pytest.approx(obj.dimensions.z) == 3.0
 
 
-def test_create_link_object_multi_collisions() -> None:
+def test_create_link_object_multi_collisions(scene, blender_context) -> None:
     """Test link creation with multiple collision elements."""
     coll1 = Collision(geometry=Box(size=Vector3(1, 1, 1)), name="c1")
     coll2 = Collision(geometry=Sphere(radius=0.5), name="c2")
     link = Link(name="multi_coll_link", initial_collisions=[coll1, coll2])
 
     robot = Robot(name="test")
-    obj = create_link_object(link, robot, Path("/tmp"))
+    obj = create_link_object(blender_context, link, robot, Path("/tmp"))
+    assert obj is not None
 
     collisions = [c for c in obj.children if "_collision" in c.name]
     assert len(collisions) == 2
@@ -73,19 +82,20 @@ def test_create_link_object_multi_collisions() -> None:
     assert any("c2" in c.name for c in collisions)
 
 
-def test_create_link_object_zero_mass() -> None:
+def test_create_link_object_zero_mass(scene, blender_context) -> None:
     """Test link creation with no inertial properties (should default to 0 mass)."""
     link = Link(name="dummy_link")  # No inertial
     robot = Robot(name="test")
-    obj = create_link_object(link, robot, Path("/tmp"))
+    obj = create_link_object(blender_context, link, robot, Path("/tmp"))
+    assert obj is not None
 
-    assert obj.linkforge.mass == 0.0
-    assert obj.linkforge.use_auto_inertia is False
+    assert safe_get_linkforge(obj).mass == 0.0
+    assert safe_get_linkforge(obj).use_auto_inertia is False
 
 
-def test_create_link_object_primitives() -> None:
+def test_create_link_object_primitives(scene, blender_context) -> None:
     """Test creating a Link object with multiple primitive visuals and collisions."""
-    # 1. Setup Core Link
+    # Setup Core Link
     box_geom = Box(size=Vector3(1, 1, 1))
     sphere_geom = Sphere(radius=0.5)
 
@@ -99,14 +109,14 @@ def test_create_link_object_primitives() -> None:
         inertial=Inertial(mass=1.0),
     )
 
-    # 2. Build in Blender
+    # Build in Blender
     collection = bpy.data.collections.new("TestCol")
-    bpy.context.scene.collection.children.link(collection)
+    scene.collection.children.link(collection)
 
     robot = Robot(name="test")
-    obj = create_link_object(link, robot, Path("/tmp"), collection=collection)
+    obj = create_link_object(blender_context, link, robot, Path("/tmp"), collection=collection)
 
-    # 3. Verify
+    # Verify
     assert obj is not None
     assert obj.name == "test_link_p"
 
@@ -115,20 +125,16 @@ def test_create_link_object_primitives() -> None:
     assert pytest.approx(visual_obj.location.x) == 1.0
 
 
-def test_create_joint_object_fixed() -> None:
+def test_create_joint_object_fixed(scene, blender_context) -> None:
     """Test creation of a Joint object in Blender."""
-    # 1. Setup Link objects
-    bpy.ops.object.empty_add(type="PLAIN_AXES", location=(0, 0, 0))
-    parent_obj = bpy.context.active_object
-    parent_obj.name = "parent_l"
-
-    bpy.ops.object.empty_add(type="PLAIN_AXES", location=(1, 0, 0))
-    child_obj = bpy.context.active_object
-    child_obj.name = "child_l"
+    # Setup Link objects
+    parent_obj = create_test_object("parent_l", None, scene)
+    child_obj = create_test_object("child_l", None, scene)
+    child_obj.location = (1, 0, 0)
 
     link_objects = {"parent_l": parent_obj, "child_l": child_obj}
 
-    # 2. Setup Core Joint
+    # Setup Core Joint
     joint = Joint(
         name="test_j",
         type=JointType.FIXED,
@@ -137,29 +143,25 @@ def test_create_joint_object_fixed() -> None:
         origin=Transform(xyz=Vector3(0.5, 0, 0)),
     )
 
-    # 3. Build in Blender
-    joint_obj = create_joint_object(joint, link_objects)
+    # Build in Blender
+    joint_obj = create_joint_object(blender_context, joint, link_objects)
 
-    # 4. Verify
+    # Verify
     assert joint_obj is not None
     assert joint_obj.parent == parent_obj
     assert pytest.approx(joint_obj.location.x) == 0.5
 
 
-def test_create_joint_object_complex() -> None:
+def test_create_joint_object_complex(scene, blender_context) -> None:
     """Test creation of a revolute Joint with limits and axis in Blender."""
-    # 1. Setup Links
-    bpy.ops.object.empty_add(type="PLAIN_AXES", location=(0, 0, 0))
-    parent_obj = bpy.context.active_object
-    parent_obj.name = "p_link"
-
-    bpy.ops.object.empty_add(type="PLAIN_AXES", location=(0, 0, 1))
-    child_obj = bpy.context.active_object
-    child_obj.name = "c_link"
+    # Setup Links
+    parent_obj = create_test_object("p_link", None, scene)
+    child_obj = create_test_object("c_link", None, scene)
+    child_obj.location = (0, 0, 1)
 
     link_objects = {"p_link": parent_obj, "c_link": child_obj}
 
-    # 2. Setup Core Joint
+    # Setup Core Joint
     joint = Joint(
         name="rev_joint",
         type=JointType.REVOLUTE,
@@ -170,12 +172,12 @@ def test_create_joint_object_complex() -> None:
         dynamics=JointDynamics(damping=0.1, friction=0.05),
     )
 
-    # 3. Build
-    joint_obj = create_joint_object(joint, link_objects)
+    # Build
+    joint_obj = create_joint_object(blender_context, joint, link_objects)
 
-    # 4. Verify properties
+    # Verify properties
     assert joint_obj is not None
-    props = joint_obj.linkforge_joint
+    props = safe_get_joint(joint_obj)
     assert props.joint_type == "REVOLUTE"
     assert props.axis == "Z"
     assert props.use_limits is True
@@ -185,20 +187,16 @@ def test_create_joint_object_complex() -> None:
     assert pytest.approx(props.dynamics_damping) == 0.1
 
 
-def test_create_joint_object_advanced_props() -> None:
+def test_create_joint_object_advanced_props(scene, blender_context) -> None:
     """Verify that safety controller and calibration are correctly synced to Blender properties."""
-    from linkforge.linkforge_core.models import JointCalibration, JointSafetyController
+    from linkforge_core.models import JointCalibration, JointSafetyController
 
-    # 1. Setup Links
-    bpy.ops.object.empty_add()
-    p_obj = bpy.context.active_object
-    p_obj.name = "p_link_adv"
-    bpy.ops.object.empty_add()
-    c_obj = bpy.context.active_object
-    c_obj.name = "c_link_adv"
+    # Setup Links
+    p_obj = create_test_object("p_link_adv", None, scene)
+    c_obj = create_test_object("c_link_adv", None, scene)
     link_objects = {"p_link_adv": p_obj, "c_link_adv": c_obj}
 
-    # 2. Setup Core Joint
+    # Setup Core Joint
     safety = JointSafetyController(
         soft_lower_limit=-1.0, soft_upper_limit=1.0, k_position=100.0, k_velocity=10.0
     )
@@ -214,11 +212,12 @@ def test_create_joint_object_advanced_props() -> None:
         calibration=calib,
     )
 
-    # 3. Build in Blender
-    joint_obj = create_joint_object(joint, link_objects)
+    # Build in Blender
+    joint_obj = create_joint_object(blender_context, joint, link_objects)
 
-    # 4. Verify properties
-    props = joint_obj.linkforge_joint
+    # Verify properties
+    assert joint_obj is not None
+    props = safe_get_joint(joint_obj)
     assert props.use_safety_controller is True
     assert props.safety_soft_lower_limit == -1.0
     assert props.safety_k_position == 100.0
@@ -229,9 +228,9 @@ def test_create_joint_object_advanced_props() -> None:
     assert props.use_calibration_falling is False
 
 
-def test_import_robot_to_scene_full() -> None:
+def test_import_robot_to_scene_full(scene, blender_context) -> None:
     """Test the full robot import entry point with a simple chain."""
-    # 1. Create Robot Model
+    # Create Robot Model
     l1 = Link(name="base_link")
     l2 = Link(name="tool_link")
     j1 = Joint(name="j1", type=JointType.FIXED, parent="base_link", child="tool_link")
@@ -239,10 +238,10 @@ def test_import_robot_to_scene_full() -> None:
     # Correct Robot instantiation using initial_links/initial_joints
     robot = Robot(name="mini_robot", initial_links=[l1, l2], initial_joints=[j1])
 
-    # 2. Import
-    result = import_robot_to_scene(robot, Path("dummy.urdf"), bpy.context)
+    # Import
+    result = import_robot_to_scene(robot, Path("dummy.urdf"), blender_context)
 
-    # 3. Verify
+    # Verify
     assert result is True
     assert "base_link" in bpy.data.objects
     assert "tool_link" in bpy.data.objects
@@ -260,7 +259,7 @@ def test_import_robot_to_scene_full() -> None:
     assert "mini_robot" in bpy.data.collections
 
 
-def test_import_robot_complex_tree() -> None:
+def test_import_robot_complex_tree(scene, blender_context) -> None:
     """Test importing a robot with a multi-branch tree structure."""
     l1 = Link(name="root")
     l2 = Link(name="branch1")
@@ -292,7 +291,7 @@ def test_import_robot_complex_tree() -> None:
     robot = Robot(name="tree_bot", initial_links=[l1, l2, l3, l4], initial_joints=[j1, j2, j3])
 
     # Needs source_path and context. Returns bool.
-    success = import_robot_to_scene(robot, Path("/tmp/robot.urdf"), bpy.context)
+    success = import_robot_to_scene(robot, Path("/tmp/robot.urdf"), blender_context)
     assert success is True
     # Check hierarchy
     root_obj = bpy.data.objects.get("root")
@@ -300,12 +299,15 @@ def test_import_robot_complex_tree() -> None:
     branch2_obj = bpy.data.objects.get("branch2")
     leaf_obj = bpy.data.objects.get("leaf")
 
+    assert branch1_obj.parent is not None
     assert branch1_obj.parent.parent == root_obj  # Link -> Joint -> Parent Link
+    assert branch2_obj.parent is not None
     assert branch2_obj.parent.parent == root_obj
+    assert leaf_obj.parent is not None
     assert leaf_obj.parent.parent == branch1_obj
 
 
-def test_import_robot_with_ros2_control_and_gazebo() -> None:
+def test_import_robot_with_ros2_control_and_gazebo(scene, blender_context) -> None:
     """Verify that ros2_control and Gazebo settings are synced to scene properties."""
     l1 = Link(name="l1")
     l2 = Link(name="l2")
@@ -333,26 +335,24 @@ def test_import_robot_with_ros2_control_and_gazebo() -> None:
         initial_gazebo_elements=[gazebo],
     )
 
-    success = import_robot_to_scene(robot, Path("/tmp/robot.urdf"), bpy.context)
+    success = import_robot_to_scene(robot, Path("/tmp/robot.urdf"), blender_context)
     assert success is True
 
     # Verify scene properties
-    lp = bpy.context.scene.linkforge
+    lp = safe_get_linkforge_scene(scene)
     assert lp.use_ros2_control is True
     assert lp.ros2_control_name == "RealRobot"
     assert len(lp.ros2_control_joints) == 1
     assert lp.controllers_yaml_path == "config.yaml"
 
 
-def test_create_sensor_object_lidar() -> None:
+def test_create_sensor_object_lidar(scene, blender_context) -> None:
     """Test creation of a LIDAR sensor in Blender."""
-    # 1. Setup parent link object
-    bpy.ops.object.empty_add(type="PLAIN_AXES")
-    link_obj = bpy.context.active_object
-    link_obj.name = "base_link"
+    # Setup parent link object
+    link_obj = create_test_object("base_link", None, scene)
     link_objects = {"base_link": link_obj}
 
-    # 2. Setup Sensor Model
+    # Setup Sensor Model
     sensor = Sensor(
         name="top_lidar",
         type=SensorType.LIDAR,
@@ -361,45 +361,47 @@ def test_create_sensor_object_lidar() -> None:
         origin=Transform(xyz=Vector3(0, 0, 0.5)),
     )
 
-    # 3. Build
-    sensor_obj = create_sensor_object(sensor, link_objects)
+    # Build
+    sensor_obj = create_sensor_object(blender_context, sensor, link_objects)
 
-    # 4. Verify
+    # Verify
     assert sensor_obj is not None
     assert sensor_obj.parent == link_obj
     assert pytest.approx(sensor_obj.location.z) == 0.5
-    assert sensor_obj.linkforge_sensor.is_robot_sensor is True
-    assert sensor_obj.linkforge_sensor.sensor_type == "LIDAR"
+    props = safe_get_sensor(sensor_obj)
+    assert props.is_robot_sensor is True
+    assert props.sensor_type == "LIDAR"
 
 
-def test_create_sensor_object_imu_gps_camera() -> None:
+def test_create_sensor_object_imu_gps_camera(scene, blender_context) -> None:
     """Verify that IMU, GPS, and Camera sensors are correctly created in Blender."""
     # Setup a dummy link for sensors to attach to
-    bpy.ops.object.empty_add()
-    link_obj = bpy.context.active_object
-    link_obj.name = "base_link"
-    link_obj.linkforge.is_robot_link = True
+    link_obj = create_test_object("base_link", None, scene)
+    safe_get_linkforge(link_obj).is_robot_link = True
     link_objects = {"base_link": link_obj}
 
-    # 1. IMU
+    # IMU
     imu = Sensor(name="imu_sensor", type=SensorType.IMU, link_name="base_link", imu_info=IMUInfo())
-    obj_imu = create_sensor_object(imu, link_objects)
-    assert obj_imu.linkforge_sensor.sensor_type == "IMU"
+    obj_imu = create_sensor_object(blender_context, imu, link_objects)
+    assert obj_imu is not None
+    assert safe_get_sensor(obj_imu).sensor_type == "IMU"
 
-    # 2. GPS
+    # GPS
     gps = Sensor(name="gps_sensor", type=SensorType.GPS, link_name="base_link", gps_info=GPSInfo())
-    obj_gps = create_sensor_object(gps, link_objects)
-    assert obj_gps.linkforge_sensor.sensor_type == "GPS"
+    obj_gps = create_sensor_object(blender_context, gps, link_objects)
+    assert obj_gps is not None
+    assert safe_get_sensor(obj_gps).sensor_type == "GPS"
 
-    # 3. Camera
+    # Camera
     cam = Sensor(
         name="cam_sensor", type=SensorType.CAMERA, link_name="base_link", camera_info=CameraInfo()
     )
-    obj_cam = create_sensor_object(cam, link_objects)
-    assert obj_cam.linkforge_sensor.sensor_type == "CAMERA"
+    obj_cam = create_sensor_object(blender_context, cam, link_objects)
+    assert obj_cam is not None
+    assert safe_get_sensor(obj_cam).sensor_type == "CAMERA"
 
 
-def test_import_robot_with_mimic() -> None:
+def test_import_robot_with_mimic(scene, blender_context) -> None:
     """Test full robot import with mimic joint resolution."""
     l1 = Link(name="base")
     l2 = Link(name="j_parent")
@@ -426,48 +428,51 @@ def test_import_robot_with_mimic() -> None:
     robot = Robot(name="mimic_bot", initial_links=[l1, l2, l3], initial_joints=[j1, j2])
 
     # Import
-    import_robot_to_scene(robot, Path("dummy.urdf"), bpy.context)
+    import_robot_to_scene(robot, Path("dummy.urdf"), blender_context)
 
     # Verify mimic link
     follower = bpy.data.objects["follower"]
     driver = bpy.data.objects["driver"]
-    assert follower.linkforge_joint.use_mimic is True
-    assert follower.linkforge_joint.mimic_joint == driver
-    assert pytest.approx(follower.linkforge_joint.mimic_multiplier) == 2.0
+    props = safe_get_joint(follower)
+    assert props.use_mimic is True
+    assert props.mimic_joint == driver
+    assert pytest.approx(props.mimic_multiplier) == 2.0
 
 
-def test_import_mesh_file_stl(tmp_path) -> None:
+def test_import_mesh_file_stl(tmp_path, scene, blender_context) -> None:
     """Test importing a real STL mesh file."""
-    # 1. Create a dummy STL file using Blender
+    # Create a dummy STL file using Blender
     bpy.ops.mesh.primitive_cube_add()
     stl_path = tmp_path / "test.stl"
-    # In modern Blender, stl_export might be in wm or export_mesh
-    if hasattr(bpy.ops.wm, "stl_export"):
-        bpy.ops.wm.stl_export(filepath=str(stl_path))
+
+    # In modern Blender (4.0+), use wm.stl_export.
+    # Use getattr for static analysis compatibility.
+    wm_ops = getattr(bpy.ops, "wm")
+    if hasattr(wm_ops, "stl_export"):
+        wm_ops.stl_export(filepath=str(stl_path))
     else:
-        # Fallback for older versions if needed, but we are on 4.5
-        bpy.ops.export_mesh.stl(filepath=str(stl_path))
+        # Fallback for legacy STL addon if present
+        export_ops = getattr(bpy.ops, "export_mesh", None)
+        if export_ops and hasattr(export_ops, "stl"):
+            export_ops.stl(filepath=str(stl_path))
+        else:
+            pytest.skip("No STL exporter found in this Blender environment")
 
     bpy.ops.object.delete()  # Cleanup cube
 
-    # 2. Import it
-    obj = import_mesh_file(stl_path, "imported_stl")
+    # Import it
+    obj = import_mesh_file(blender_context, stl_path, "imported_stl")
 
-    # 3. Verify
+    # Verify
     assert obj is not None
     assert obj.name == "imported_stl"
     assert obj.type == "MESH"
 
 
-def test_create_joint_object_prismatic() -> None:
+def test_create_joint_object_prismatic(scene, blender_context) -> None:
     """Test creation of a PRISMATIC joint with limits and CUSTOM axis."""
-    bpy.ops.object.empty_add()
-    p_obj = bpy.context.active_object
-    p_obj.name = "p"
-
-    bpy.ops.object.empty_add()
-    c_obj = bpy.context.active_object
-    c_obj.name = "c"
+    p_obj = create_test_object("p", None, scene)
+    c_obj = create_test_object("c", None, scene)
 
     link_objects = {"p": p_obj, "c": c_obj}
 
@@ -480,9 +485,9 @@ def test_create_joint_object_prismatic() -> None:
         limits=JointLimits(lower=0, upper=1.0, effort=10, velocity=1),
     )
 
-    obj = create_joint_object(joint, link_objects)
+    obj = create_joint_object(blender_context, joint, link_objects)
     assert obj is not None
-    props = obj.linkforge_joint
+    props = safe_get_joint(obj)
     assert props.joint_type == "PRISMATIC"
     assert props.axis == "CUSTOM"
     # Expect normalized 1/sqrt(2) approx 0.707
@@ -490,82 +495,82 @@ def test_create_joint_object_prismatic() -> None:
     assert pytest.approx(props.custom_axis_y) == 0.7071067
 
 
-def test_create_joint_object_continuous_floating() -> None:
+def test_create_joint_object_continuous_floating(scene, blender_context) -> None:
     """Test creation of CONTINUOUS and FLOATING joints."""
-    bpy.ops.object.empty_add()
-    p_obj = bpy.context.active_object
-    p_obj.name = "p_c"
-    bpy.ops.object.empty_add()
-    c_obj = bpy.context.active_object
-    c_obj.name = "c_c"
+    p_obj = create_test_object("p_c", None, scene)
+    c_obj = create_test_object("c_c", None, scene)
     link_objects = {"p_c": p_obj, "c_c": c_obj}
 
-    # 1. Continuous
     j_cont = Joint(
         name="cont", type=JointType.CONTINUOUS, parent="p_c", child="c_c", axis=Vector3(1, 0, 0)
     )
-    obj_cont = create_joint_object(j_cont, link_objects)
-    assert obj_cont.linkforge_joint.joint_type == "CONTINUOUS"
+    obj_cont = create_joint_object(blender_context, j_cont, link_objects)
+    assert obj_cont is not None
+    assert safe_get_joint(obj_cont).joint_type == "CONTINUOUS"
 
-    # 2. Floating
+    # Floating
     j_float = Joint(name="float_j", type=JointType.FLOATING, parent="p_c", child="c_c")
-    obj_float = create_joint_object(j_float, link_objects)
-    assert obj_float.linkforge_joint.joint_type == "FLOATING"
+    obj_float = create_joint_object(blender_context, j_float, link_objects)
+    assert obj_float is not None
+    assert safe_get_joint(obj_float).joint_type == "FLOATING"
 
 
-def test_create_link_object_with_mesh_visual(tmp_path) -> None:
+def test_create_link_object_with_mesh_visual(tmp_path, scene, blender_context) -> None:
     """Test creating a link that uses a mesh file for visual."""
-    # 1. Create dummy STL
+    # Create dummy STL
     bpy.ops.mesh.primitive_uv_sphere_add()
     mesh_path = tmp_path / "v.stl"
-    if hasattr(bpy.ops.wm, "stl_export"):
-        bpy.ops.wm.stl_export(filepath=str(mesh_path))
+    wm_ops = getattr(bpy.ops, "wm")
+    if hasattr(wm_ops, "stl_export"):
+        wm_ops.stl_export(filepath=str(mesh_path))
     else:
-        bpy.ops.export_mesh.stl(filepath=str(mesh_path))
+        export_ops = getattr(bpy.ops, "export_mesh", None)
+        if export_ops and hasattr(export_ops, "stl"):
+            export_ops.stl(filepath=str(mesh_path))
+        else:
+            pytest.skip("No STL exporter found")
     bpy.ops.object.delete()
 
-    # 2. Model
+    # Model
     mesh_geom = Mesh(resource="v.stl")
     visual = Visual(geometry=mesh_geom)
     link = Link(name="mesh_link", initial_visuals=[visual])
 
-    # 3. Build (providing tmp_path as source_directory)
+    # Build (providing tmp_path as source_directory)
     robot = Robot(name="test")
-    obj = create_link_object(link, robot, tmp_path)
+    obj = create_link_object(blender_context, link, robot, tmp_path)
 
-    # 4. Verify
+    # Verify
     assert obj is not None
     visual_obj = next(c for c in obj.children if "_visual" in c.name)
     assert visual_obj.type == "MESH"
 
 
-def test_create_material_existing() -> None:
+def test_create_material_existing(scene, blender_context) -> None:
     """Test that existing materials are reused."""
     mat_name = "ExistingMat"
     mat = bpy.data.materials.new(name=mat_name)
     color = Color(1, 0, 0, 1)
 
-    mat_out = create_material_from_color(color, mat_name)
+    mat_out = create_material_from_color(blender_context, color, mat_name)
     assert mat_out == mat
 
 
-def test_import_mesh_file_unsupported() -> None:
+def test_import_mesh_file_unsupported(scene, blender_context) -> None:
     """Test handling of unsupported mesh formats."""
-    obj = import_mesh_file(Path("unsupported.txt"), "test")
+    obj = import_mesh_file(blender_context, Path("unsupported.txt"), "test")
     assert obj is None
 
 
-def test_create_primitive_mesh_invalid() -> None:
+def test_create_primitive_mesh_invalid(scene, blender_context) -> None:
     """Test handling of unsupported geometry types."""
-    obj = create_primitive_mesh(None, "test")
+    obj = create_primitive_mesh(blender_context, None, "test")  # type: ignore
     assert obj is None
 
 
-def test_create_sensor_with_gazebo_plugin() -> None:
+def test_create_sensor_with_gazebo_plugin(scene, blender_context) -> None:
     """Test that Gazebo plugins are preserved during import (no legacy filtering)."""
-    bpy.ops.object.empty_add()
-    link_obj = bpy.context.active_object
-    link_obj.name = "base"
+    link_obj = create_test_object("base", None, scene)
     link_objects = {"base": link_obj}
 
     # Create sensor with legacy plugin
@@ -580,18 +585,17 @@ def test_create_sensor_with_gazebo_plugin() -> None:
         plugin=plugin,
     )
 
-    obj = create_sensor_object(sensor, link_objects)
+    obj = create_sensor_object(blender_context, sensor, link_objects)
     assert obj is not None
     # All plugins should now be preserved (no legacy filtering)
-    assert obj.linkforge_sensor.use_gazebo_plugin is True
-    assert obj.linkforge_sensor.plugin_filename == "libgazebo_ros_camera.so"
+    props = safe_get_sensor(obj)
+    assert props.use_gazebo_plugin is True
+    assert props.plugin_filename == "libgazebo_ros_camera.so"
 
 
-def test_create_sensor_with_custom_plugin() -> None:
+def test_create_sensor_with_custom_plugin(scene, blender_context) -> None:
     """Test that custom (non-legacy) plugins are preserved."""
-    bpy.ops.object.empty_add()
-    link_obj = bpy.context.active_object
-    link_obj.name = "base"
+    link_obj = create_test_object("base", None, scene)
     link_objects = {"base": link_obj}
 
     # Create sensor with custom plugin (not libgazebo_ros_*)
@@ -606,16 +610,17 @@ def test_create_sensor_with_custom_plugin() -> None:
         plugin=plugin,
     )
 
-    obj = create_sensor_object(sensor, link_objects)
+    obj = create_sensor_object(blender_context, sensor, link_objects)
     assert obj is not None
     # Custom plugin should be preserved
-    assert obj.linkforge_sensor.use_gazebo_plugin is True
-    assert obj.linkforge_sensor.plugin_filename == "libmy_custom.so"
+    props = safe_get_sensor(obj)
+    assert props.use_gazebo_plugin is True
+    assert props.plugin_filename == "libmy_custom.so"
 
 
-def test_import_robot_with_legacy_transmissions_skipped() -> None:
+def test_import_robot_with_legacy_transmissions_skipped(scene, blender_context) -> None:
     """Test that legacy transmissions are skipped (no auto-conversion)."""
-    from linkforge.linkforge_core.models import (
+    from linkforge_core.models import (
         Transmission,
         TransmissionActuator,
         TransmissionJoint,
@@ -656,18 +661,18 @@ def test_import_robot_with_legacy_transmissions_skipped() -> None:
     )
 
     # Import
-    success = import_robot_to_scene(robot, Path("/tmp/robot.urdf"), bpy.context)
+    success = import_robot_to_scene(robot, Path("/tmp/robot.urdf"), blender_context)
     assert success is True
 
     # Auto-conversion is now disabled/removed.
-    scene = bpy.context.scene
-    assert scene.linkforge.use_ros2_control is False
-    assert len(scene.linkforge.ros2_control_joints) == 0
+    scene_props = safe_get_linkforge_scene(scene)
+    assert scene_props.use_ros2_control is False
+    assert len(scene_props.ros2_control_joints) == 0
 
 
-def test_import_robot_skips_transmissions_when_ros2_control_exists() -> None:
+def test_import_robot_skips_transmissions_when_ros2_control_exists(scene, blender_context) -> None:
     """Test that transmissions are skipped when ros2_control is present."""
-    from linkforge.linkforge_core.models import Transmission, TransmissionJoint
+    from linkforge_core.models import Transmission, TransmissionJoint
 
     l1 = Link(name="base")
     l2 = Link(name="arm")
@@ -686,7 +691,7 @@ def test_import_robot_skips_transmissions_when_ros2_control_exists() -> None:
     )
     rc = Ros2Control(name="RealRobot", type="system", hardware_plugin="fake_hw", joints=[rc_joint])
 
-    from linkforge.linkforge_core.models import TransmissionActuator
+    from linkforge_core.models import TransmissionActuator
 
     trans = Transmission(
         name="trans1",
@@ -711,17 +716,16 @@ def test_import_robot_skips_transmissions_when_ros2_control_exists() -> None:
         initial_transmissions=[trans],
     )
 
-    success = import_robot_to_scene(robot, Path("/tmp/robot.urdf"), bpy.context)
+    success = import_robot_to_scene(robot, Path("/tmp/robot.urdf"), blender_context)
     assert success is True
 
     # ros2_control should take priority, transmission should be skipped
-    scene = bpy.context.scene
-    assert len(scene.linkforge.ros2_control_joints) == 1
+    assert len(safe_get_linkforge_scene(scene).ros2_control_joints) == 1
 
 
-def test_create_link_with_material() -> None:
+def test_create_link_with_material(scene, blender_context) -> None:
     """Test link creation with visual material."""
-    from linkforge.linkforge_core.models import Material
+    from linkforge_core.models import Material
 
     color = Color(r=1.0, g=0.0, b=0.0, a=1.0)
     material = Material(name="RedMat", color=color)
@@ -729,24 +733,21 @@ def test_create_link_with_material() -> None:
     link = Link(name="colored_link", initial_visuals=[visual])
 
     robot = Robot(name="test")
-    obj = create_link_object(link, robot, Path("/tmp"))
+    obj = create_link_object(blender_context, link, robot, Path("/tmp"))
 
     assert obj is not None
-    assert obj.linkforge.use_material is True
+    assert safe_get_linkforge(obj).use_material is True
     # Check that visual child has material
     visual_obj = next(c for c in obj.children if "_visual" in c.name)
-    assert len(visual_obj.data.materials) > 0
+    assert visual_obj.type == "MESH"
+    assert visual_obj.data is not None
+    assert hasattr(visual_obj.data, "materials") and len(getattr(visual_obj.data, "materials")) > 0
 
 
-def test_create_joint_with_custom_axis() -> None:
+def test_create_joint_with_custom_axis(scene, blender_context) -> None:
     """Test joint creation with non-standard axis."""
-    bpy.ops.object.empty_add()
-    p_obj = bpy.context.active_object
-    p_obj.name = "p"
-
-    bpy.ops.object.empty_add()
-    c_obj = bpy.context.active_object
-    c_obj.name = "c"
+    p_obj = create_test_object("p", None, scene)
+    c_obj = create_test_object("c", None, scene)
 
     link_objects = {"p": p_obj, "c": c_obj}
 
@@ -760,28 +761,33 @@ def test_create_joint_with_custom_axis() -> None:
         limits=JointLimits(0, 1, 10, 1),
     )
 
-    obj = create_joint_object(joint, link_objects)
+    obj = create_joint_object(blender_context, joint, link_objects)
     assert obj is not None
-    props = obj.linkforge_joint
+    props = safe_get_joint(obj)
     assert props.axis == "CUSTOM"
     assert props.custom_axis_x != 0.0
 
 
-def test_import_mesh_file_nonexistent() -> None:
+def test_import_mesh_file_nonexistent(scene, blender_context) -> None:
     """Test handling of non-existent mesh files."""
-    obj = import_mesh_file(Path("/nonexistent/file.stl"), "test")
+    obj = import_mesh_file(blender_context, Path("/nonexistent/file.stl"), "test")
     assert obj is None
 
 
-def test_create_link_with_collision_mesh(tmp_path) -> None:
+def test_create_link_with_collision_mesh(tmp_path, scene, blender_context) -> None:
     """Test link creation with mesh collision geometry."""
     # Create dummy STL
     bpy.ops.mesh.primitive_cube_add()
     mesh_path = tmp_path / "collision.stl"
-    if hasattr(bpy.ops.wm, "stl_export"):
-        bpy.ops.wm.stl_export(filepath=str(mesh_path))
+    wm_ops = getattr(bpy.ops, "wm")
+    if hasattr(wm_ops, "stl_export"):
+        wm_ops.stl_export(filepath=str(mesh_path))
     else:
-        bpy.ops.export_mesh.stl(filepath=str(mesh_path))
+        export_ops = getattr(bpy.ops, "export_mesh", None)
+        if export_ops and hasattr(export_ops, "stl"):
+            export_ops.stl(filepath=str(mesh_path))
+        else:
+            pytest.skip("No STL exporter found")
     bpy.ops.object.delete()
 
     # Model
@@ -791,34 +797,34 @@ def test_create_link_with_collision_mesh(tmp_path) -> None:
 
     # Build
     robot = Robot(name="test")
-    obj = create_link_object(link, robot, tmp_path)
+    obj = create_link_object(blender_context, link, robot, tmp_path)
 
     # Verify
     assert obj is not None
     coll_obj = next(c for c in obj.children if "_collision" in c.name)
     assert coll_obj["imported_from_source"] is True
     assert coll_obj["collision_geometry_type"] == "MESH"
-    assert obj.linkforge.collision_quality == 100.0
+    assert safe_get_linkforge(obj).collision_quality == 100.0
 
 
-def test_create_primitive_mesh_cylinder_sphere() -> None:
+def test_create_primitive_mesh_cylinder_sphere(scene, blender_context) -> None:
     """Test creation of Cylinder and Sphere primitives."""
     # Cylinder
     cyl = Cylinder(radius=0.5, length=2.0)
-    obj_cyl = create_primitive_mesh(cyl, "test_cyl")
+    obj_cyl = create_primitive_mesh(blender_context, cyl, "test_cyl")
     assert obj_cyl is not None
     assert obj_cyl["source_geometry_type"] == "CYLINDER"
     assert pytest.approx(obj_cyl.dimensions.z) == 2.0
 
     # Sphere
     sphere = Sphere(radius=1.0)
-    obj_sphere = create_primitive_mesh(sphere, "test_sphere")
+    obj_sphere = create_primitive_mesh(blender_context, sphere, "test_sphere")
     assert obj_sphere is not None
     assert obj_sphere["source_geometry_type"] == "SPHERE"
     assert pytest.approx(obj_sphere.dimensions.x) == 2.0
 
 
-def test_sensor_unknown_link() -> None:
+def test_sensor_unknown_link(scene, blender_context) -> None:
     """Test sensor creation with unknown link name."""
     sensor = Sensor(
         name="orphan_sensor",
@@ -827,18 +833,20 @@ def test_sensor_unknown_link() -> None:
         camera_info=CameraInfo(),
     )
 
-    obj = create_sensor_object(sensor, {})
+    obj = create_sensor_object(blender_context, sensor, {})
     assert obj is None
 
 
-def test_joint_axis_standard_axes() -> None:
+def test_joint_axis_standard_axes(scene, blender_context) -> None:
     """Test joint axis detection for standard X, Y, Z axes."""
     bpy.ops.object.empty_add()
     p_obj = bpy.context.active_object
+    assert p_obj is not None
     p_obj.name = "p"
 
     bpy.ops.object.empty_add()
     c_obj = bpy.context.active_object
+    assert c_obj is not None
     c_obj.name = "c"
 
     link_objects = {"p": p_obj, "c": c_obj}
@@ -852,8 +860,9 @@ def test_joint_axis_standard_axes() -> None:
         axis=Vector3(1, 0, 0),
         limits=JointLimits(0, 1, 10, 1),
     )
-    obj_x = create_joint_object(j_x, link_objects)
-    assert obj_x.linkforge_joint.axis == "X"
+    obj_x = create_joint_object(blender_context, j_x, link_objects)
+    assert obj_x is not None
+    assert safe_get_joint(obj_x).axis == "X"
 
     # Test Y axis
     j_y = Joint(
@@ -864,11 +873,12 @@ def test_joint_axis_standard_axes() -> None:
         axis=Vector3(0, 1, 0),
         limits=JointLimits(0, 1, 10, 1),
     )
-    obj_y = create_joint_object(j_y, link_objects)
-    assert obj_y.linkforge_joint.axis == "Y"
+    obj_y = create_joint_object(blender_context, j_y, link_objects)
+    assert obj_y is not None
+    assert safe_get_joint(obj_y).axis == "Y"
 
 
-def test_import_robot_topological_sort() -> None:
+def test_import_robot_topological_sort(scene, blender_context) -> None:
     """Test that joints are created in correct topological order."""
     # Create a chain where joints must be sorted
     l1 = Link(name="root")
@@ -881,7 +891,7 @@ def test_import_robot_topological_sort() -> None:
 
     robot = Robot(name="chain_bot", initial_links=[l1, l2, l3], initial_joints=[j2, j1])
 
-    success = import_robot_to_scene(robot, Path("/tmp/robot.urdf"), bpy.context)
+    success = import_robot_to_scene(robot, Path("/tmp/robot.urdf"), blender_context)
     assert success is True
 
     # Verify hierarchy is correct despite out-of-order definition
@@ -889,37 +899,44 @@ def test_import_robot_topological_sort() -> None:
     mid = bpy.data.objects["mid"]
     leaf = bpy.data.objects["leaf"]
 
+    assert mid.parent is not None
     assert mid.parent.parent == root
+    assert leaf.parent is not None
     assert leaf.parent.parent == mid
 
 
-def test_normalize_and_consolidate_imported_objects() -> None:
+def test_normalize_and_consolidate_imported_objects(scene, blender_context) -> None:
     """Test the robust mesh normalization and consolidation logic."""
     from linkforge.blender.adapters.core_to_blender import (
         normalize_and_consolidate_imported_objects,
     )
 
-    bpy.ops.wm.read_factory_settings(use_empty=True)
-    import linkforge.blender
-
-    linkforge.blender.register()
-
     # Create a hierarchy: Empty -> Mesh -> Mesh
-    bpy.ops.object.empty_add(location=(1, 1, 1))
-    root = bpy.context.active_object
-    root.name = "root_empty"
+    root = create_test_object("root_empty", None, scene)
+    root.location = (1.0, 1.0, 1.0)
 
-    bpy.ops.mesh.primitive_cube_add(size=1.0, location=(2, 2, 2))
-    m1 = bpy.context.active_object
-    m1.name = "mesh1"
+    import bmesh
+
+    m1_mesh = bpy.data.meshes.new("mesh1")
+    bm = bmesh.new()
+    bmesh.ops.create_cube(bm, size=1.0)
+    bm.to_mesh(m1_mesh)
+    bm.free()
+    m1 = create_test_object("mesh1", m1_mesh, scene)
+    m1.location = (2.0, 2.0, 2.0)
     m1.parent = root
 
-    bpy.ops.mesh.primitive_uv_sphere_add(radius=0.5, location=(3, 3, 3))
-    m2 = bpy.context.active_object
-    m2.name = "mesh2"
+    m2_mesh = bpy.data.meshes.new("mesh2")
+    bm = bmesh.new()
+    bmesh.ops.create_uvsphere(bm, u_segments=8, v_segments=8, radius=0.5)
+    bm.to_mesh(m2_mesh)
+    bm.free()
+    m2 = create_test_object("mesh2", m2_mesh, scene)
+    m2.location = (3.0, 3.0, 3.0)
     m2.parent = m1
 
-    bpy.context.view_layer.update()
+    if bpy.context.view_layer is not None:
+        bpy.context.view_layer.update()
 
     # Store names before they are potentially deleted
     root_name = root.name
@@ -927,46 +944,36 @@ def test_normalize_and_consolidate_imported_objects() -> None:
     m2_name = m2.name
 
     # Consolidate
-    res = normalize_and_consolidate_imported_objects([root], "consolidated")
+    res = normalize_and_consolidate_imported_objects(blender_context, [root], "consolidated")
 
     assert res is not None
     assert res.name == "consolidated"
     assert res.type == "MESH"
-    assert len(res.data.vertices) > 0
+    assert res.data is not None
+    assert hasattr(res.data, "vertices") and len(getattr(res.data, "vertices")) > 0
     # Check that root empty and original meshes are queued for deletion (implicitly cleaned by the function)
     assert root_name not in bpy.data.objects
     assert m1_name not in bpy.data.objects
     assert m2_name not in bpy.data.objects
 
 
-def test_create_joint_object_mimic_logic() -> None:
+def test_create_joint_object_mimic_logic(scene, blender_context) -> None:
     """Test that mimics are correctly resolved even if created out of order."""
     from linkforge.blender.adapters.core_to_blender import create_joint_object
-    from linkforge.linkforge_core.models import Joint, JointMimic, JointType
-
-    bpy.ops.wm.read_factory_settings(use_empty=True)
-    import linkforge.blender
-
-    linkforge.blender.register()
+    from linkforge_core.models import Joint, JointMimic, JointType
 
     # Parent/Child link shells
-    bpy.ops.object.empty_add()
-    p = bpy.context.active_object
-    p.name = "p"
-    bpy.ops.object.empty_add()
-    c = bpy.context.active_object
-    c.name = "c"
+    p = create_test_object("p", None, scene)
+    c = create_test_object("c", None, scene)
 
     # Target joint object
-    bpy.ops.object.empty_add()
-    driver_obj = bpy.context.active_object
-    driver_obj.name = "driver_joint"
+    driver_obj = create_test_object("driver_joint", None, scene)
 
     link_objects = {"p": p, "c": c}
     # Mocking the discovery of the driver joint in scene
     # The actual implementation looks for objects by name
 
-    from linkforge.linkforge_core.models import JointLimits
+    from linkforge_core.models import JointLimits
 
     joint = Joint(
         name="follower",
@@ -978,15 +985,16 @@ def test_create_joint_object_mimic_logic() -> None:
         mimic=JointMimic(joint="driver_joint", multiplier=0.5),
     )
 
-    res = create_joint_object(joint, link_objects)
-    assert res.linkforge_joint.use_mimic is True
+    res = create_joint_object(blender_context, joint, link_objects)
+    assert res is not None
+    res_props = safe_get_joint(res)
+    assert res_props.use_mimic is True
+    assert res_props.mimic_multiplier == 0.5
 
-    assert res.linkforge_joint.mimic_multiplier == 0.5
 
-
-def test_sensor_noise_properties(clean_scene) -> None:
+def test_sensor_noise_properties(clean_scene, scene, blender_context) -> None:
     """Verify sensor noise property mapping for LIDAR, IMU, and GPS."""
-    # 1. LIDAR with noise
+    # LIDAR with noise
     lidar = Sensor(
         name="Lidar",
         type=SensorType.LIDAR,
@@ -996,7 +1004,7 @@ def test_sensor_noise_properties(clean_scene) -> None:
         ),
     )
 
-    # 2. IMU with noise
+    # IMU with noise
     imu = Sensor(
         name="IMU",
         type=SensorType.IMU,
@@ -1006,7 +1014,7 @@ def test_sensor_noise_properties(clean_scene) -> None:
         ),
     )
 
-    # 3. GPS with noise
+    # GPS with noise
     gps = Sensor(
         name="GPS",
         type=SensorType.GPS,
@@ -1016,25 +1024,26 @@ def test_sensor_noise_properties(clean_scene) -> None:
         ),
     )
 
-    base_link = bpy.data.objects.new("base_link", None)
-    bpy.context.collection.objects.link(base_link)
+    base_link = create_test_object("base_link", None)
+    scene.collection.objects.link(base_link)
     link_map = {"base_link": base_link}
 
     for s in [lidar, imu, gps]:
-        obj = create_sensor_object(s, link_map)
+        obj = create_sensor_object(blender_context, s, link_map)
         assert obj is not None
-        assert obj.linkforge_sensor.use_noise is True
-        assert obj.linkforge_sensor.noise_type == "gaussian"
+        sensor_props = safe_get_sensor(obj)
+        assert sensor_props.use_noise is True
+        assert sensor_props.noise_type == "gaussian"
 
         if s.type == SensorType.LIDAR:
-            assert obj.linkforge_sensor.noise_stddev == pytest.approx(0.01)
+            assert sensor_props.noise_stddev == pytest.approx(0.01)
         elif s.type == SensorType.IMU:
-            assert obj.linkforge_sensor.noise_stddev == pytest.approx(0.001)
+            assert sensor_props.noise_stddev == pytest.approx(0.001)
         elif s.type == SensorType.GPS:
-            assert obj.linkforge_sensor.noise_stddev == pytest.approx(0.5)
+            assert sensor_props.noise_stddev == pytest.approx(0.5)
 
 
-def test_multi_visual_collision_naming(clean_scene) -> None:
+def test_multi_visual_collision_naming(clean_scene, scene, blender_context) -> None:
     """Verify suffix naming for multiple unnamed visuals and collisions."""
     box_geom = Box(size=Vector3(1, 1, 1))
 
@@ -1045,7 +1054,9 @@ def test_multi_visual_collision_naming(clean_scene) -> None:
     )
 
     robot = Robot(name="test")
-    obj = create_link_object(link, robot, Path("/cwd"), collection=bpy.context.collection)
+    obj = create_link_object(
+        blender_context, link, robot, Path("/cwd"), collection=scene.collection
+    )
     assert obj is not None
 
     # Check visuals: naming should follow {link_name}_visual_{idx}
@@ -1057,17 +1068,17 @@ def test_multi_visual_collision_naming(clean_scene) -> None:
     assert len(collisions) == 2, f"Expected 2 collisions, found {[c.name for c in obj.children]}"
 
 
-def test_normalize_consolidate_empty_cleanup(clean_scene) -> None:
+def test_normalize_consolidate_empty_cleanup(clean_scene, scene, blender_context) -> None:
     """Verify cleanup when no meshes are found in imported objects."""
-    empty = bpy.data.objects.new("EmptyContainer", None)
-    bpy.context.collection.objects.link(empty)
+    empty = create_test_object("EmptyContainer", None)
+    scene.collection.objects.link(empty)
 
-    res = normalize_and_consolidate_imported_objects([empty], "Final")
+    res = normalize_and_consolidate_imported_objects(blender_context, [empty], "Final")
     assert res is None
     assert "EmptyContainer" not in bpy.data.objects
 
 
-def test_import_robot_sensor_creation_failure(clean_scene) -> None:
+def test_import_robot_sensor_creation_failure(clean_scene, scene, blender_context) -> None:
     """Verify import_robot_to_scene handles sensor creation failure."""
     robot = Robot(
         name="test_robot",
@@ -1082,10 +1093,7 @@ def test_import_robot_sensor_creation_failure(clean_scene) -> None:
         ],
     )
 
-    context = mock.MagicMock()
-    context.scene = bpy.context.scene
-    context.view_layer = bpy.context.view_layer
-
+    context = blender_context
     with mock.patch(
         "linkforge.blender.adapters.core_to_blender.create_sensor_object", return_value=None
     ):
@@ -1093,15 +1101,20 @@ def test_import_robot_sensor_creation_failure(clean_scene) -> None:
         assert "base_link" in bpy.data.objects
 
 
-def test_import_mesh_file_removes_non_mesh_stragglers(tmp_path) -> None:
+def test_import_mesh_file_removes_non_mesh_stragglers(tmp_path, scene, blender_context) -> None:
     """Verify that import side-effects (Camera, Lamp, Empties) are cleaned up."""
     # Create a real STL file to import
     bpy.ops.mesh.primitive_cube_add()
     stl_path = tmp_path / "cube.stl"
-    if hasattr(bpy.ops.wm, "stl_export"):
-        bpy.ops.wm.stl_export(filepath=str(stl_path))
+    wm_ops = getattr(bpy.ops, "wm")
+    if hasattr(wm_ops, "stl_export"):
+        wm_ops.stl_export(filepath=str(stl_path))
     else:
-        bpy.ops.export_mesh.stl(filepath=str(stl_path))
+        export_ops = getattr(bpy.ops, "export_mesh", None)
+        if export_ops and hasattr(export_ops, "stl"):
+            export_ops.stl(filepath=str(stl_path))
+        else:
+            pytest.skip("No STL exporter found")
     bpy.ops.object.delete()
 
     # Wrap the real importer so we can inject a Camera side-effect during the call,
@@ -1112,15 +1125,15 @@ def test_import_mesh_file_removes_non_mesh_stragglers(tmp_path) -> None:
     def import_with_sideeffect(**kwargs):
         result = real_import(**kwargs)
         cam_data = bpy.data.cameras.new("_tmp_cam")
-        cam_obj = bpy.data.objects.new(injected_cam_name, cam_data)
-        bpy.context.scene.collection.objects.link(cam_obj)
+        cam_obj = create_test_object(injected_cam_name, cam_data)
+        scene.collection.objects.link(cam_obj)
         return result
 
     with mock.patch(
         "linkforge.blender.adapters.core_to_blender.bpy.ops.wm.stl_import",
         side_effect=import_with_sideeffect,
     ):
-        result = import_mesh_file(stl_path, "mesh_only")
+        result = import_mesh_file(blender_context, stl_path, "mesh_only")
 
     assert result is not None
     assert result.type == "MESH"

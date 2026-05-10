@@ -1,80 +1,94 @@
-import typing
+import contextlib
+import os
+from unittest.mock import MagicMock
 
 import pytest
 
+# Relative import from the mock environment package
+from .mock_bpy_env import setup_mock_bpy  # noqa: E402
+
+# BPY Mocking (Global)
+# We initialize the mock once at the module level because Blender's RNA
+# and property registration system is effectively global.
+
+# Check if we are running inside real Blender
 try:
     import bpy
-    from bpy.app.handlers import persistent as _bpy_persistent  # noqa: F401
 
-    HAS_BPY = True
+    # Real Blender has a valid binary_path. fake-bpy-module usually has it empty or missing.
+    # We also check for 'version' to be sure it's a fully-formed app object.
+    is_real_blender = (
+        hasattr(bpy, "app")
+        and bool(getattr(bpy.app, "binary_path", ""))
+        and not isinstance(bpy.app, MagicMock)
+    )
 except (ImportError, AttributeError):
-    HAS_BPY = False
+    is_real_blender = False
 
-if HAS_BPY:
+if is_real_blender:
+    # Always force registration of linkforge properties to ensure test stability
     import linkforge.blender
 
-    @pytest.fixture(scope="session", autouse=True)
-    def register_addon() -> None:
-        """Register the LinkForge addon once for the entire test session.
-
-        This ensures that all Blender operators and property groups are
-        globally available before any tests are executed.
-        """
+    with contextlib.suppress(Exception):
         linkforge.blender.register()
+else:
+    bpy = setup_mock_bpy()
+    # Force registration of linkforge properties in the mock environment
+    import linkforge.blender
 
-    @pytest.fixture(autouse=True)
-    def ensure_registered() -> None:
-        """Verify addon registration before each test.
+    linkforge.blender.register()
 
-        Blender's internal state can occasionally reset (e.g., during factory
-        resets). This fixture checks for the presence of LinkForge properties
-        on core types and re-registers the addon if they are missing.
-        """
-        needs_re_reg = not hasattr(bpy.types.Object, "linkforge") or not hasattr(
-            bpy.types.Scene, "linkforge"
-        )
 
-        if needs_re_reg:
-            linkforge.blender.register()
+@pytest.fixture
+def blender_context():
+    """Returns the Blender context adapter."""
+    import bpy
+    from linkforge.blender.adapters.context import BlenderContext
 
-    @pytest.fixture(autouse=True)
-    def clean_scene() -> typing.Generator[None, None, None]:
-        """Prepare a clean Blender environment for each test.
+    return BlenderContext(bpy)
 
-        Actions performed:
-        - Removes all objects and their linked data (meshes, materials).
-        - Clears all non-default collections.
-        - Resets LinkForge-specific global scene properties to default states.
-        """
-        # Delete all objects in all collections
-        for obj in bpy.data.objects:
-            bpy.data.objects.remove(obj, do_unlink=True)
 
-        # Delete all mesh data
-        for mesh in bpy.data.meshes:
-            bpy.data.meshes.remove(mesh, do_unlink=True)
+@pytest.fixture
+def scene(blender_context):
+    """Returns the active scene."""
+    return blender_context.scene
 
-        # Delete all materials
-        for mat in bpy.data.materials:
-            bpy.data.materials.remove(mat, do_unlink=True)
 
-        # Delete all collections (except master)
-        for col in bpy.data.collections:
-            if col.name != "Collection":
-                bpy.data.collections.remove(col, do_unlink=True)
+@pytest.fixture(autouse=True)
+def clean_scene(blender_context):
+    """Automatically cleans the scene before each test."""
+    if not is_real_blender:
+        setup_mock_bpy()
 
-        # Reset Scene properties
-        scene = bpy.context.scene
-        if scene and hasattr(scene, "linkforge"):
-            from linkforge.blender.properties.robot_props import RobotPropertyGroup
+    # Real Blender removal of all objects and underlying data
+    import bpy
 
-            props = typing.cast(RobotPropertyGroup, scene.linkforge)
-            props.use_ros2_control = False
-            props.ros2_control_joints.clear()
+    # Clear scene-level LinkForge property collections (persisted on bpy.data.scenes)
+    scene = bpy.context.scene
+    if hasattr(scene, "linkforge"):
+        lf = scene.linkforge
+        if hasattr(lf, "ros2_control_joints"):
+            lf.ros2_control_joints.clear()
+        if hasattr(lf, "ros2_control_parameters"):
+            lf.ros2_control_parameters.clear()
 
-        # Clear architectural statistics cache for test isolation
-        from linkforge.blender.utils.scene_utils import clear_stats_cache
+    for data_type in ["objects", "meshes", "materials", "armatures", "actions", "collections"]:
+        data_block = getattr(bpy.data, data_type)
+        for item in list(data_block):
+            try:
+                # Don't remove the Scene Collection or the Scene itself
+                if data_type == "collections" and item.name == "Scene Collection":
+                    continue
+                data_block.remove(item, do_unlink=True)
+            except (ReferenceError, RuntimeError, AttributeError):
+                pass
 
-        clear_stats_cache()
+    # Nuclear purge of any orphan data
+    bpy.data.orphans_purge()
 
-        yield
+    # Clear architectural statistics cache for test isolation
+    os.environ["LINKFORGE_DISABLE_CACHE"] = "1"
+    from linkforge.blender.utils.scene_utils import clear_stats_cache
+
+    clear_stats_cache()
+    yield

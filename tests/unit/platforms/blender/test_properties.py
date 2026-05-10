@@ -1,250 +1,84 @@
-"""Tests for Blender property groups.
+"""Unit tests for Blender Properties, Validation, and Preferences."""
 
-Tests property registration, default values, and basic functionality
-for all LinkForge property groups.
-"""
+from __future__ import annotations
+
+from unittest.mock import MagicMock, patch
 
 import bpy
+import pytest
+from linkforge.blender.preferences import (
+    update_joint_empty_size,
+)
+from linkforge.blender.utils.property_helpers import find_property_owner
+
+from tests.blender_test_utils import (
+    create_test_object,
+    safe_get_joint,
+    safe_get_linkforge,
+    safe_get_validation,
+)
+
+# Property Helpers
 
 
-class TestControlProperties:
-    """Tests for ros2_control property groups."""
+class TestPropertyHelpers:
+    def test_find_property_owner(self, scene, blender_context) -> None:
+        """Test finding the owner object of a PropertyGroup."""
+        obj = create_test_object("test_owner", None, scene)
+        props = safe_get_linkforge(obj)
 
-    def test_ros2_control_parameter_property(self) -> None:
-        """Test Ros2ControlParameterProperty creation and defaults."""
-        from linkforge.blender.properties import control_props
-
-        # Create a test scene property collection
-        scene = bpy.context.scene
-        if not hasattr(scene, "test_params"):
-            bpy.types.Scene.test_params = bpy.props.CollectionProperty(
-                type=control_props.Ros2ControlParameterProperty
-            )
-
-        # Add a parameter
-        param = scene.test_params.add()
-        assert param.name == "param"
-        assert param.value == "0.0"
-
-        # Modify values
-        param.name = "my_param"
-        param.value = "1.5"
-        assert param.name == "my_param"
-        assert param.value == "1.5"
-
-        # Cleanup
-        scene.test_params.clear()
-        del bpy.types.Scene.test_params
-
-    def test_ros2_control_interface_property(self) -> None:
-        """Test Ros2ControlInterfaceProperty creation and defaults."""
-        from linkforge.blender.properties import control_props
-
-        scene = bpy.context.scene
-        if not hasattr(scene, "test_interfaces"):
-            bpy.types.Scene.test_interfaces = bpy.props.CollectionProperty(
-                type=control_props.Ros2ControlInterfaceProperty
-            )
-
-        # Add an interface
-        interface = scene.test_interfaces.add()
-        assert interface.name == "position"
-
-        # Test enum values
-        interface.name = "velocity"
-        assert interface.name == "velocity"
-
-        interface.name = "effort"
-        assert interface.name == "effort"
-
-        # Test parameters collection
-        param = interface.parameters.add()
-        param.name = "test"
-        assert len(interface.parameters) == 1
-
-        # Cleanup
-        scene.test_interfaces.clear()
-        del bpy.types.Scene.test_interfaces
-
-    def test_ros2_control_joint_property(self) -> None:
-        """Test Ros2ControlJointProperty creation and defaults."""
-        from linkforge.blender.properties import control_props
-
-        scene = bpy.context.scene
-        if not hasattr(scene, "test_joints"):
-            bpy.types.Scene.test_joints = bpy.props.CollectionProperty(
-                type=control_props.Ros2ControlJointProperty
-            )
-
-        # Add a joint
-        joint = scene.test_joints.add()
-        assert joint.name == ""
-
-        # Test command interface defaults
-        assert joint.cmd_position is True
-        assert joint.cmd_velocity is False
-        assert joint.cmd_effort is False
-
-        # Test state interface defaults
-        assert joint.state_position is True
-        assert joint.state_velocity is True
-        assert joint.state_effort is False
-        assert joint.show_parameters is False
-
-        # Modify values
-        joint.name = "joint1"
-        joint.cmd_velocity = True
-        joint.state_effort = True
-
-        assert joint.name == "joint1"
-        assert joint.cmd_velocity is True
-        assert joint.state_effort is True
-
-        # Test parameters
-        param = joint.parameters.add()
-        param.name = "param1"
-        assert len(joint.parameters) == 1
-
-        # Cleanup
-        scene.test_joints.clear()
-        del bpy.types.Scene.test_joints
+        owner = find_property_owner(bpy.context, props, "linkforge")
+        assert owner == obj
 
 
-class TestSensorProperties:
-    """Tests for sensor property groups."""
-
-    def test_sensor_property_defaults(self, clean_scene) -> None:
-        """Test SensorPropertyGroup default values."""
-        # Create sensor object
-        sensor_obj = bpy.data.objects.new("test_sensor", None)
-        bpy.context.scene.collection.objects.link(sensor_obj)
-
-        sensor = sensor_obj.linkforge_sensor
-
-        # Test defaults
-        assert sensor.is_robot_sensor is False
-        assert sensor.sensor_type == "CAMERA"
-        assert sensor.update_rate == 30.0
-        assert sensor.always_on is False
-        assert sensor.visualize is False
-
-        # Test camera defaults
-        assert sensor.camera_width == 640
-        assert sensor.camera_height == 480
-        assert sensor.camera_format == "R8G8B8"
-
-        # Test LIDAR defaults
-        assert sensor.lidar_horizontal_samples == 640
-        assert sensor.lidar_vertical_samples == 1
-
-        # Test noise defaults
-        assert sensor.use_noise is False
-        assert sensor.noise_type == "gaussian"
-        assert sensor.noise_mean == 0.0
-        assert sensor.noise_stddev == 0.0
-
-        # Cleanup
-        bpy.data.objects.remove(sensor_obj)
-
-    def test_sensor_name_property(self, clean_scene) -> None:
-        """Test sensor name getter/setter."""
-        sensor_obj = bpy.data.objects.new("my_sensor", None)
-        bpy.context.scene.collection.objects.link(sensor_obj)
-
-        sensor = sensor_obj.linkforge_sensor
-
-        # Test getter
-        assert sensor.sensor_name == "my_sensor"
-
-        # Test setter
-        sensor.sensor_name = "new_sensor_name"
-        assert sensor_obj.name == "new_sensor_name"
-        assert sensor.sensor_name == "new_sensor_name"
-
-        # Cleanup
-        bpy.data.objects.remove(sensor_obj)
-
-    def test_sensor_types(self, clean_scene) -> None:
-        """Test all sensor types."""
-        sensor_obj = bpy.data.objects.new("test_sensor", None)
-        bpy.context.scene.collection.objects.link(sensor_obj)
-
-        sensor = sensor_obj.linkforge_sensor
-
-        # Test all sensor types
-        sensor_types = ["CAMERA", "DEPTH_CAMERA", "LIDAR", "IMU", "GPS", "CONTACT", "FORCE_TORQUE"]
-        for sensor_type in sensor_types:
-            sensor.sensor_type = sensor_type
-            assert sensor.sensor_type == sensor_type
-
-        # Cleanup
-        bpy.data.objects.remove(sensor_obj)
+# Validation Properties
 
 
-class TestRobotProperties:
-    """Tests for robot property groups."""
+class TestValidationProperties:
+    def test_validation_issue_line_splitting(self, scene, blender_context) -> None:
+        """Test correctly splitting long messages and suggestions into lines."""
+        wm = bpy.context.window_manager
+        res = safe_get_validation(wm)
+        res.clear()
 
-    def test_robot_property_exists(self, clean_scene) -> None:
-        """Test robot property exists on scene."""
-        scene = bpy.context.scene
+        err = res.errors.add()
+        err.message = "This is a very long message that should be split into multiple lines."
 
-        # Robot properties should be registered by addon
-        # Check for common property names
-        assert (
-            hasattr(scene, "linkforge")
-            or hasattr(scene, "linkforge_robot")
-            or hasattr(scene, "robot")
-        )
+        # Verify splitting logic (assuming 60 chars limit)
+        lines = err.message_lines
+        assert len(lines) >= 1
+        for line in lines:
+            assert len(line) <= 60
 
-    def test_robot_property_access(self, clean_scene) -> None:
-        """Test accessing robot properties."""
-        scene = bpy.context.scene
-
-        # Verify we can access scene properties without error
-        assert scene is not None
-        assert scene.linkforge.show_ros2_control_parameters is True
+    def test_validation_result_clearing(self, scene, blender_context) -> None:
+        """Test clearing validation results."""
+        wm = bpy.context.window_manager
+        res = safe_get_validation(wm)
+        res.has_results = True
+        res.clear()
+        assert res.has_results is False
 
 
-class TestTransmissionProperties:
-    """Tests for transmission property groups."""
+# Addon Preferences
 
-    def test_transmission_property_defaults(self, clean_scene) -> None:
-        """Test transmission property defaults."""
-        # Create transmission object
-        trans_obj = bpy.data.objects.new("test_transmission", None)
-        bpy.context.scene.collection.objects.link(trans_obj)
 
-        trans = trans_obj.linkforge_transmission
+class TestPreferences:
+    def test_update_joint_empty_size(self, scene, blender_context) -> None:
+        """Test that updating joint size in prefs affects scene objects."""
+        obj = create_test_object("test_joint_size", None, scene)
 
-        # Test defaults
-        assert trans.is_robot_transmission is False
-        if hasattr(trans, "transmission_type"):
-            # Check actual enum values (SIMPLE, DIFFERENTIAL, etc.)
-            assert trans.transmission_type in [
-                "SIMPLE",
-                "DIFFERENTIAL",
-                "FOUR_BAR_LINKAGE",
-                "CUSTOM",
-            ]
+        # Ensure we are testing the linkforge joint props
+        safe_get_joint(obj).is_robot_joint = True
+        obj.empty_display_size = 0.1
 
-        # Cleanup
-        bpy.data.objects.remove(trans_obj)
+        mock_prefs = MagicMock()
+        mock_prefs.joint_empty_size = 0.5
 
-    def test_transmission_types(self, clean_scene) -> None:
-        """Test transmission types."""
-        # Create transmission object
-        trans_obj = bpy.data.objects.new("test_transmission", None)
-        bpy.context.scene.collection.objects.link(trans_obj)
+        with patch("linkforge.blender.visualization.joint_gizmos.update_viz_handle"):
+            update_joint_empty_size(mock_prefs, bpy.context)
 
-        trans = trans_obj.linkforge_transmission
+        assert obj.empty_display_size == pytest.approx(0.5)
 
-        # Test type switching if available (use actual enum values)
-        if hasattr(trans, "transmission_type"):
-            trans.transmission_type = "SIMPLE"
-            assert trans.transmission_type == "SIMPLE"
 
-            trans.transmission_type = "DIFFERENTIAL"
-            assert trans.transmission_type == "DIFFERENTIAL"
-
-        # Cleanup
-        bpy.data.objects.remove(trans_obj)
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

@@ -12,8 +12,8 @@ from pathlib import Path
 
 import bpy
 from bpy_extras.io_utils import ImportHelper
+from linkforge_core.logging_config import get_logger
 
-from ...linkforge_core.logging_config import get_logger
 from ..utils.decorators import OperatorReturn, safe_execute
 from ..utils.scene_utils import clear_stats_cache
 
@@ -69,7 +69,10 @@ class LINKFORGE_OT_import_robot_model(Operator, ImportHelper):  # type: ignore[m
         Returns:
             Set containing the execution state (e.g., {'FINISHED'} or {'CANCELLED'}).
         """
-        from ...linkforge_core.parsers import URDFParser
+        from linkforge_core.parsers import URDFParser, clear_xacro_cache
+
+        # Clear XACRO cache to ensure changes on disk are picked up
+        clear_xacro_cache()
 
         # Parse URDF/XACRO file
         source_path = Path(self.filepath)
@@ -112,7 +115,7 @@ class LINKFORGE_OT_import_robot_model(Operator, ImportHelper):  # type: ignore[m
         is_xacro = source_path.suffix == ".xacro" or source_path.name.endswith(".urdf.xacro")
 
         # Detect Sandbox Root for security (allows sibling folders like meshes/)
-        from ...linkforge_core.validation.security import find_sandbox_root
+        from linkforge_core.validation.security import find_sandbox_root
 
         sandbox_root = find_sandbox_root(source_path)
         logger.info(f"Importing robot from: {source_path}")
@@ -121,8 +124,8 @@ class LINKFORGE_OT_import_robot_model(Operator, ImportHelper):  # type: ignore[m
         # Smart Import Logic:
         # 1. If it looks like URDF, try parsing as URDF.
         # 2. If parsing fails because of Xacro tags, catch the error and switch to Xacro mode.
-        from ...linkforge_core import RobotParserError, XacroDetectedError
-        from ...linkforge_core.base import FileSystemResolver
+        from linkforge_core import RobotParserError, XacroDetectedError
+        from linkforge_core.base import FileSystemResolver
 
         # Read additional package paths from preferences
         from ..preferences import get_addon_prefs
@@ -160,7 +163,7 @@ class LINKFORGE_OT_import_robot_model(Operator, ImportHelper):  # type: ignore[m
             # XACRO PROCESSING (Triggered by extension OR fallback detection)
             if is_xacro:
                 # Convert XACRO to URDF using native XacroResolver
-                from ...linkforge_core.parsers import XacroResolver
+                from linkforge_core.parsers import XacroResolver
 
                 self.report({"INFO"}, f"Processing XACRO file: {source_path.name}")
 
@@ -194,7 +197,7 @@ class LINKFORGE_OT_import_robot_model(Operator, ImportHelper):  # type: ignore[m
             return {"CANCELLED"}
 
         # Validate robot structure
-        from ...linkforge_core.validation import RobotValidator
+        from linkforge_core.validation import RobotValidator
 
         validator = RobotValidator()
         result = validator.validate(robot)
@@ -216,9 +219,10 @@ class LINKFORGE_OT_import_robot_model(Operator, ImportHelper):  # type: ignore[m
             )
 
         # Import to scene (Asynchronous)
+        from ..adapters.context import BlenderContext
         from ..logic.asynchronous_builder import AsynchronousRobotBuilder
 
-        builder = AsynchronousRobotBuilder(robot, source_path, context)
+        builder = AsynchronousRobotBuilder(robot, source_path, BlenderContext(context))
         builder.start()
 
         # We return FINISHED here, but the builder continues in the background via timers.
