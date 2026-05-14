@@ -1,9 +1,14 @@
+from __future__ import annotations
+
 import contextlib
+import math
 import re
 import sys
 import types
 import typing
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any, Generic, TypeVar, cast, overload
 from unittest.mock import MagicMock, PropertyMock
 
 
@@ -36,28 +41,17 @@ class DynamicModule(types.ModuleType):
 
 
 class MockVector:
-    """Mock for mathutils.Vector (mutable)."""
+    """Mock for mathutils.Vector."""
 
-    def __init__(self, x=0.0, y=0.0, z=0.0):
-        # Case 1: Object with .x, .y, .z attributes
-        if hasattr(x, "x") and hasattr(x, "y") and hasattr(x, "z"):
-            self._data = [float(x.x), float(x.y), float(x.z)]
-            return
+    _data: list[float]
 
-        if isinstance(x, (list, tuple, MockVector)) or (
-            hasattr(x, "__getitem__") and not isinstance(x, (str, bytes, int, float))
-        ):
-            try:
-                self._data = [float(x[0]), float(x[1]), float(x[2])]
-                return
-            except (IndexError, TypeError, AttributeError):
-                self._data = [0.0, 0.0, 0.0]
-                return
-
-        try:
+    def __init__(self, x: float | typing.Iterable[float] = 0.0, y: float = 0.0, z: float = 0.0):
+        if isinstance(x, (list, tuple, MockVector, MagicMock)):
+            self._data = [float(v) for v in x]
+        elif hasattr(x, "x") and hasattr(x, "y") and hasattr(x, "z"):
+            self._data = [float(getattr(x, "x")), float(getattr(x, "y")), float(getattr(x, "z"))]
+        else:
             self._data = [float(x), float(y), float(z)]
-        except (TypeError, ValueError, AttributeError):
-            self._data = [0.0, 0.0, 0.0]
 
     @property
     def x(self):
@@ -148,12 +142,17 @@ class MockVector:
         return MockQuaternion()
 
 
-class MockQuaternion:
+class MockQuaternion(MockVector):
     """Mock for mathutils.Quaternion."""
 
-    def __init__(self, *args):
-        self.w, self.x, self.y, self.z = 1.0, 0.0, 0.0, 0.0
+    _euler_hint: MockEuler | None
+    _quaternion_hint: MockQuaternion | None
+
+    def __init__(self, w: float = 1.0, x: float = 0.0, y: float = 0.0, z: float = 0.0):
+        super().__init__(x, y, z)
+        self.w = float(w)
         self._euler_hint = None
+        self._quaternion_hint = None
 
     def copy(self):
         q = MockQuaternion()
@@ -177,12 +176,22 @@ class MockQuaternion:
 class MockEuler(MockVector):
     """Mock for mathutils.Euler."""
 
-    def __init__(self, x=0, y=0, z=0, order="XYZ"):
+    _euler_hint: MockEuler | None
+    order: str
+
+    def __init__(
+        self,
+        x: float | typing.Iterable[float] = 0.0,
+        y: float | str = 0.0,
+        z: float = 0.0,
+        order: str = "XYZ",
+    ):
         if isinstance(x, (list, tuple, MockVector)):
             super().__init__(x)
             self.order = y if isinstance(y, str) else order
         else:
-            super().__init__(x, y, z)
+            # y must be a float if x is not an iterable
+            super().__init__(x, cast(float, y), z)
             self.order = order
         self._euler_hint = None
 
@@ -207,6 +216,10 @@ class MockEuler(MockVector):
 
 class MockMatrix:
     """Mock for mathutils.Matrix."""
+
+    data: list[list[float]]
+    _euler_hint: MockEuler | None
+    _quaternion_hint: MockQuaternion | None
 
     def __init__(self, data=None):
         if data is None:
@@ -278,6 +291,19 @@ class MockMatrix:
         if hint is not None:
             return hint
         return MockQuaternion()
+
+    @property
+    def is_identity(self):
+        n = len(self.data)
+        for i in range(n):
+            for j in range(len(self.data[0])):
+                if i == j:
+                    if abs(self.data[i][j] - 1.0) > 1e-6:
+                        return False
+                else:
+                    if abs(self.data[i][j]) > 1e-6:
+                        return False
+        return True
 
     def to_euler(self, order="XYZ"):
         hint = getattr(self, "_euler_hint", None)
@@ -492,6 +518,7 @@ RESERVED_RNA_PROPS = {
     "linkforge_sensor",
     "linkforge_transmission",
     "linkforge_validation",
+    "linkforge_scene",
 }
 
 
@@ -580,7 +607,7 @@ class MockPropertyGroup(metaclass=PropertyMetaclass):
         self._values[name] = value
 
     def __getattr__(self, key):
-        if key.startswith("_"):
+        if key.startswith("__"):
             raise AttributeError(key)
 
         for cls in type(self).__mro__:
@@ -673,18 +700,28 @@ class MockPropertyGroup(metaclass=PropertyMetaclass):
         return self._values.keys()
 
 
-class MockCollection(list):
+T = TypeVar("T")
+
+
+class MockCollection(Generic[T]):
     """Mock for Blender's CollectionProperty items."""
 
-    def __init__(self, prop_type=None, name="Collection"):
-        super().__init__()
+    def __init__(
+        self,
+        prop_type: Callable[..., T] | None = None,
+        name: str = "Collection",
+        is_real_collection: bool = False,
+    ):
+        self._items: list[T] = []
         self.prop_type = prop_type
         self.name = name
+        self.is_real_collection = is_real_collection
         self.new_from_object = None
         self.id_data = None
         self._id = id(self)
         self._objects = None
         self._children = None
+        self._parent_collection = None
 
     def __hash__(self):
         return hash(self._id)
@@ -712,27 +749,55 @@ class MockCollection(list):
     def children(self, val):
         self._children = val
 
-    def append(self, item):
+    def append(self, item: T):
         if item in self:
             return
 
         # Handle Blender's unique naming behavior
-        if hasattr(item, "name") and item.name:
-            base_name = item.name
+        if hasattr(item, "name") and getattr(item, "name"):
+            base_name = getattr(item, "name")
             name = base_name
             counter = 1
             # Avoid infinite recursion by checking against private items list if needed,
             # but super() check is enough for basic uniqueness.
-            existing_names = {obj.name for obj in self if obj != item and hasattr(obj, "name")}
+            existing_names = {
+                getattr(obj, "name") for obj in self if obj != item and hasattr(obj, "name")
+            }
             while name in existing_names:
                 name = f"{base_name}.{counter:03d}"
                 counter += 1
-            item.name = name
+            # We use Any to avoid Pyright errors on unconstrained generic T
+            typing.cast(Any, item).name = name
 
-        super().append(item)
+        self._items.append(item)
+
+    def extend(self, items):
+        for item in items:
+            self.append(item)
+
+    def __setitem__(self, key, value):
+        if isinstance(key, (int, slice)):
+            self._items[key] = value
+            return
+        # If it's a string, we might want to support replacement by name,
+        # but Blender collections usually don't support direct name assignment like this.
+        # However, for mocks it might be useful.
+        for i, item in enumerate(self._items):
+            if hasattr(item, "name") and item.name == key:
+                self._items[i] = value
+                return
+        self.append(value)
 
     def link(self, item):
         self.append(item)
+        # If this is an 'objects' collection of a real Collection, update item.users_collection
+        parent_coll = getattr(self, "_parent_collection", None)
+        if (
+            parent_coll
+            and hasattr(item, "users_collection")
+            and parent_coll not in item.users_collection
+        ):
+            item.users_collection.append(parent_coll)
 
     def foreach_get(self, attr, data):
         for i, item in enumerate(self):
@@ -743,10 +808,12 @@ class MockCollection(list):
             else:
                 data[i] = val
 
-    def add(self):
-        item = self.prop_type() if self.prop_type else MockPropertyGroup()
-        self.append(item)
-        return item
+    def add(self, **kwargs) -> T:
+        item = self.prop_type(**kwargs) if self.prop_type else MockPropertyGroup(**kwargs)
+        # Use cast to satisfy Pyright since MockPropertyGroup might not be T if prop_type is missing
+        casted_item = typing.cast(T, item)
+        self.append(casted_item)
+        return casted_item
 
     def new(self, name=None, data=None, type=None):  # noqa: A002
         if self.prop_type is MockObject:
@@ -757,22 +824,36 @@ class MockCollection(list):
             item = MockPropertyGroup(name=name)
 
         if type and hasattr(item, "type"):
-            item.type = type
-        self.append(item)
-        return item
+            typing.cast(Any, item).type = type
 
-    def __getitem__(self, key):
+        casted_item = typing.cast(T, item)
+        self.append(casted_item)
+        return casted_item
+
+    def __len__(self):
+        return len(self._items)
+
+    def __iter__(self) -> typing.Iterator[T]:
+        return iter(self._items)
+
+    @overload
+    def __getitem__(self, key: int | str) -> T: ...
+
+    @overload
+    def __getitem__(self, key: slice) -> list[T]: ...
+
+    def __getitem__(self, key: int | slice | str) -> T | list[T]:
         if isinstance(key, (int, slice)):
-            return super().__getitem__(key)
-        for item in self:
-            if hasattr(item, "name") and item.name == key:
+            return self._items[key]
+        for item in self._items:
+            if hasattr(item, "name") and getattr(item, "name") == key:
                 return item
         raise KeyError(f"Item '{key}' not found in collection '{self.name}'")
 
     def __contains__(self, key):
         if isinstance(key, str):
-            return any(hasattr(item, "name") and item.name == key for item in self)
-        return super().__contains__(key)
+            return any(hasattr(item, "name") and item.name == key for item in self._items)
+        return key in self._items
 
     def get(self, key, default=None):
         try:
@@ -780,25 +861,28 @@ class MockCollection(list):
         except (KeyError, TypeError):
             return default
 
+    def clear(self):
+        self._items.clear()
+
     def remove(self, item, do_unlink=True):
         if isinstance(item, int):
-            if 0 <= item < len(self):
+            if 0 <= item < len(self._items):
                 self.pop(item)
-        elif item in self:
-            super().remove(item)
+        elif item in self._items:
+            self._items.remove(item)
+
+    def pop(self, index=-1):
+        return self._items.pop(index)
 
     def keys(self):
         return [item.name for item in self if hasattr(item, "name")]
-
-    def clear(self):
-        super().clear()
 
     @property
     def bl_rna(self):
         return MagicMock()
 
     def __getattr__(self, key):
-        if key.startswith("_"):
+        if key.startswith("__"):
             raise AttributeError(key)
         val = MagicMock(name=key)
         setattr(self, key, val)
@@ -852,28 +936,56 @@ class MockMaterialSlot(MockPropertyGroup):
         self.material = material
 
 
+class MockVertex(MockPropertyGroup):
+    def __init__(self, co=None, **kwargs):
+        super().__init__(**kwargs)
+        self.co = MockVector(co) if co is not None else MockVector()
+
+
 class MockMesh(MockPropertyGroup):
     def __init__(self, name="Mesh"):
         super().__init__(name=name)
         self.name = name
-        self.vertices = MockCollection(prop_type=lambda: MockPropertyGroup(co=MockVector()))
-        self.polygons = MockCollection(prop_type=lambda: MockPropertyGroup(vertices=[]))
-        self.materials = MockCollection(prop_type=MockMaterial)
+        self.vertices = MockCollection(prop_type=MockVertex, name="vertices")
+        self.polygons = MockCollection(
+            prop_type=lambda **kwargs: MockPropertyGroup(vertices=MockCollection(), **kwargs),
+            name="polygons",
+        )
+        self.materials = MockCollection(prop_type=MockMaterial, name="materials")
 
     def transform(self, matrix):
-        pass
+        for v in self.vertices:
+            v.co = matrix @ v.co
+
+    def copy(self):
+        new_mesh = MockMesh(f"{self.name}_copy")
+        for v in self.vertices:
+            nv = new_mesh.vertices.add()
+            nv.co = MockVector(v.co)
+        for p in self.polygons:
+            np = new_mesh.polygons.add()
+            # In Blender, polygon vertices are indices. In mock, we support both but default to a collection.
+            np.vertices = MockCollection()
+            for v_idx in p.vertices:
+                np.vertices.append(v_idx)
+        return new_mesh
 
     def calc_loop_triangles(self):
-        self.loop_triangles = MockCollection(prop_type=lambda: MockPropertyGroup(vertices=[]))
+        self.loop_triangles = MockCollection(
+            prop_type=lambda **kwargs: MockPropertyGroup(vertices=MockCollection(), **kwargs)
+        )
         for poly in self.polygons:
             if len(poly.vertices) == 4:
                 t1 = self.loop_triangles.add()
-                t1.vertices = [poly.vertices[0], poly.vertices[1], poly.vertices[2]]
+                t1.vertices = MockCollection()
+                t1.vertices.extend([poly.vertices[0], poly.vertices[1], poly.vertices[2]])
                 t2 = self.loop_triangles.add()
-                t2.vertices = [poly.vertices[0], poly.vertices[2], poly.vertices[3]]
+                t2.vertices = MockCollection()
+                t2.vertices.extend([poly.vertices[0], poly.vertices[2], poly.vertices[3]])
             else:
                 t = self.loop_triangles.add()
-                t.vertices = list(poly.vertices)
+                t.vertices = MockCollection()
+                t.vertices.extend(list(poly.vertices))
 
     def to_mesh_clear(self):
         pass
@@ -953,6 +1065,14 @@ class MockLight(MockPropertyGroup):
 
 
 class MockObject(MockPropertyGroup):
+    data: Any
+    linkforge: MockPropertyGroup
+    linkforge_joint: MockPropertyGroup
+    linkforge_sensor: MockPropertyGroup
+    linkforge_transmission: MockPropertyGroup
+    linkforge_validation: MockPropertyGroup
+    linkforge_scene: MockPropertyGroup
+
     def __init__(self, name="Object", data=None, **kwargs):
         super().__init__(**kwargs)
         self._name = name
@@ -977,10 +1097,10 @@ class MockObject(MockPropertyGroup):
         self.rotation_mode = "XYZ"
         self._scale = MockVector(1, 1, 1)
         self._base_dimensions = MockVector(0, 0, 0)
-        self.constraints = MockCollection()
-        self.modifiers = MockCollection()
-        self.children = MockCollection()
-        self.users_collection = MockCollection()
+        self.constraints = MockCollection(name="constraints")
+        self.modifiers = MockCollection(name="modifiers")
+        self.children = MockCollection(name="children")
+        self.users_collection = MockCollection(name="users_collection")
         self.bound_box = [(0.0, 0.0, 0.0)] * 8
         self.empty_display_type = "PLAIN_AXES"
         self.empty_display_size = 0.5
@@ -996,9 +1116,21 @@ class MockObject(MockPropertyGroup):
         if not any("linkforge_scene" in c.__dict__ for c in type(self).__mro__):
             self.linkforge_scene = MockPropertyGroup(name="linkforge_scene")
             self.linkforge_scene.ros2_control_joints = MockCollection(prop_type=MockPropertyGroup)
+
         if not any("linkforge_joint" in c.__dict__ for c in type(self).__mro__):
             self.linkforge_joint = MockPropertyGroup(name="linkforge_joint")
             self.linkforge_joint.is_robot_joint = False
+
+        if not any("linkforge_sensor" in c.__dict__ for c in type(self).__mro__):
+            self.linkforge_sensor = MockPropertyGroup(name="linkforge_sensor")
+            self.linkforge_sensor.is_robot_sensor = False
+
+        if not any("linkforge_transmission" in c.__dict__ for c in type(self).__mro__):
+            self.linkforge_transmission = MockPropertyGroup(name="linkforge_transmission")
+            self.linkforge_transmission.is_robot_transmission = False
+
+        if not any("linkforge_validation" in c.__dict__ for c in type(self).__mro__):
+            self.linkforge_validation = MockPropertyGroup(name="linkforge_validation")
 
     @property
     def name(self):
@@ -1035,6 +1167,24 @@ class MockObject(MockPropertyGroup):
             ).inverted() @ m
         else:
             self._matrix_local = m.copy()
+        self._update_transforms_from_matrix_local()
+
+    def _update_transforms_from_matrix_local(self):
+        """Sync location, rotation, and scale from the local matrix."""
+        self._location.x = self._matrix_local.data[0][3]
+        self._location.y = self._matrix_local.data[1][3]
+        self._location.z = self._matrix_local.data[2][3]
+
+        # Extract scale (magnitude of basis vectors)
+        for i in range(3):
+            col = [self._matrix_local.data[j][i] for j in range(3)]
+            self._scale[i] = math.sqrt(sum(c * c for c in col))
+
+        # Euler extraction (simplistic for mock)
+        euler = self._matrix_local.to_euler()
+        self._rotation_euler.x = euler.x
+        self._rotation_euler.y = euler.y
+        self._rotation_euler.z = euler.z
 
     @property
     def matrix_local(self):
@@ -1043,12 +1193,7 @@ class MockObject(MockPropertyGroup):
     @matrix_local.setter
     def matrix_local(self, value):
         self._matrix_local = MockMatrix(value)
-        self._location.x = self._matrix_local.data[0][3]
-        self._location.y = self._matrix_local.data[1][3]
-        self._location.z = self._matrix_local.data[2][3]
-        self._scale.x = self._matrix_local.data[0][0]
-        self._scale.y = self._matrix_local.data[1][1]
-        self._scale.z = self._matrix_local.data[2][2]
+        self._update_transforms_from_matrix_local()
 
     @property
     def parent(self):
@@ -1150,9 +1295,10 @@ class MockObject(MockPropertyGroup):
             p = p.parent
 
         base_dim = self._get_base_dimensions()
-        return MockVector(
+        dims = MockVector(
             base_dim.x * world_scale.x, base_dim.y * world_scale.y, base_dim.z * world_scale.z
         )
+        return dims
 
     @dimensions.setter
     def dimensions(self, value):
@@ -1201,6 +1347,9 @@ class MockObject(MockPropertyGroup):
     def copy(self):
         new_obj = MockObject(name=f"{self.name}_copy", data=self.data)
         new_obj.matrix_world = self.matrix_world.copy()
+        # Register with global state so operators can find it
+        if state.data:
+            state.data.objects.append(new_obj)
         return new_obj
 
     def evaluated_get(self, depsgraph):
@@ -1216,11 +1365,15 @@ class MockObject(MockPropertyGroup):
 class MockScene(MockPropertyGroup):
     """Mock for bpy.types.Scene."""
 
+    linkforge: MockPropertyGroup
+    linkforge_scene: MockPropertyGroup
+    linkforge_validation: MockPropertyGroup
+
     def __init__(self, name="Scene", **kwargs):
         super().__init__(**kwargs)
         self.name = name
         self.objects = MockCollection(prop_type=MockObject)
-        self.collection = MockCollection()
+        self.collection = MockCollection(name="Master Collection", is_real_collection=True)
         self.collection.objects = self.objects
         self.collection.children = MockCollection()
         self.view_layers = MockCollection()
@@ -1239,6 +1392,9 @@ class MockScene(MockPropertyGroup):
         self.linkforge.use_ros2_control = True
         self.linkforge.ros2_control_joints = MockCollection(prop_type=MockPropertyGroup)
         self.linkforge.ros2_control_parameters = MockCollection(prop_type=MockPropertyGroup)
+
+        self.linkforge_scene = self.linkforge
+        self.linkforge_validation = MockPropertyGroup(name="linkforge_validation")
 
 
 class MockOperator:
@@ -1329,19 +1485,6 @@ mock_bpy.props.FloatVectorProperty = MockPropertyDescriptor
 
 mock_app = DynamicModule("bpy.app")
 
-_is_real_blender = False
-try:
-    import bpy as _real_bpy
-
-    if (
-        hasattr(_real_bpy, "app")
-        and hasattr(_real_bpy.app, "binary_path")
-        and _real_bpy.app.binary_path
-    ):
-        _is_real_blender = True
-except (ImportError, AttributeError):
-    pass
-
 # Force promotion of mocks into sys.modules to ensure standalone execution
 # matches the high-fidelity mock environment even if real Blender is present.
 sys.modules["mathutils"] = typing.cast(types.ModuleType, mock_mathutils)
@@ -1359,7 +1502,10 @@ def setup_mock_bpy():
     # Reset persistent data for each test to ensure isolation
     mock_data.clear()
     mock_data.objects = MockCollection(prop_type=MockObject)
-    mock_data.collections = MockCollection()
+    # Collections in Blender can contain other objects/collections
+    mock_data.collections = MockCollection(
+        prop_type=lambda name: MockCollection(name=name, is_real_collection=True)
+    )
     mock_data.meshes = MockCollection(prop_type=MockMesh)
     mock_data.actions = MockCollection()
     mock_data.node_groups = MockCollection()
@@ -1376,6 +1522,7 @@ def setup_mock_bpy():
     global mock_context
     mock_context = MagicMock(name="Context")
     mock_bpy.data = mock_data
+    state.data = mock_data
     mock_bpy.context = mock_context
     mock_bpy.app = mock_app
 
@@ -1404,8 +1551,6 @@ def setup_mock_bpy():
             mock_depsgraph.updates.append(update)
 
         for handler in mock_app.handlers.depsgraph_update_post:
-            import contextlib
-
             with contextlib.suppress(Exception):
                 handler(active_scene, mock_depsgraph)
 
@@ -1436,6 +1581,7 @@ def setup_mock_bpy():
     # Sync scene objects with data objects
     active_scene.objects = mock_data.objects
     active_scene.collection.objects = mock_data.objects
+    active_scene.collection.objects._parent_collection = active_scene.collection
 
     mock_context.evaluated_depsgraph_get = lambda: MagicMock(name="Depsgraph")
     mock_context.window_manager = MockPropertyGroup()
@@ -1471,7 +1617,16 @@ def setup_mock_bpy():
         mw.data[1][3] = float(location[1])
         mw.data[2][3] = float(location[2])
         obj.matrix_world = mw
-        mock_data.objects.append(obj)
+        if obj not in mock_data.objects:
+            mock_data.objects.append(obj)
+
+        # Link to master collection and update users_collection
+        if mock_context.scene and mock_context.scene.collection:
+            if obj not in mock_context.scene.collection.objects:
+                mock_context.scene.collection.objects.append(obj)
+            if mock_context.scene.collection not in obj.users_collection:
+                obj.users_collection.append(mock_context.scene.collection)
+
         mock_context.active_object = obj
         if mock_context.view_layer:
             mock_context.view_layer.objects.active = obj
@@ -1488,40 +1643,79 @@ def setup_mock_bpy():
 
     def mock_cube_add(size=2.0, location=(0, 0, 0), **kwargs):
         mesh = MockMesh(name="CubeMesh")
-        [mesh.vertices.add() for _ in range(8)]
-        for _ in range(6):
+        # Vertices for a cube with side length 'size'
+        half = size / 2.0
+        coords = [
+            (-half, -half, -half),
+            (half, -half, -half),
+            (half, half, -half),
+            (-half, half, -half),
+            (-half, -half, half),
+            (half, -half, half),
+            (half, half, half),
+            (-half, half, half),
+        ]
+        for c in coords:
+            v = mesh.vertices.add()
+            v.co = MockVector(c)
+
+        for p_idx in [
+            (0, 1, 2, 3),
+            (4, 5, 6, 7),
+            (0, 4, 5, 1),
+            (1, 5, 6, 2),
+            (2, 6, 7, 3),
+            (3, 7, 4, 0),
+        ]:
             p = mesh.polygons.add()
-            p.vertices = [0, 1, 2, 3]  # Mock quad
+            p.vertices = MockCollection()
+            p.vertices.extend(list(p_idx))
+
         obj = MockObject(name="Cube", data=mesh)
-        obj._base_dimensions = MockVector(1.0, 1.0, 1.0)
-        obj.dimensions = MockVector(size, size, size)
         _setup_new_object(obj, location)
+        # base_dimensions should be calculated from vertices
+        obj._base_dimensions = MockVector(0, 0, 0)
+        obj.dimensions = MockVector(size, size, size)  # This will set scale to 1.0
         mock_data.meshes.append(mesh)
         return {"FINISHED"}
 
     def mock_sphere_add(radius=1.0, location=(0, 0, 0), **kwargs):
         mesh = MockMesh(name="SphereMesh")
-        [mesh.vertices.add() for _ in range(482)]
+        # Add vertices to satisfy topology detection (default: 32 segs, 16 rings = 482 verts)
+        for _ in range(482):
+            mesh.vertices.add()
+        # Add faces to satisfy topology detection (default: 480 faces)
         for _ in range(480):
-            p = mesh.polygons.add()
-            p.vertices = [0, 1, 2, 3]  # Mock quad
+            mesh.polygons.add()
+        # Mock a sphere with just its bounding box vertices to ensure dimensions work
+        mesh.vertices[0].co = MockVector(-1, -1, -1)
+        mesh.vertices[1].co = MockVector(1, 1, 1)
+
         obj = MockObject(name="Sphere", data=mesh)
-        obj._base_dimensions = MockVector(1.0, 1.0, 1.0)
-        obj.dimensions = MockVector(radius * 2, radius * 2, radius * 2)
         _setup_new_object(obj, location)
+        # Unit sphere in Blender has diameter 2.0 (radius 1.0)
+        obj._base_dimensions = MockVector(2.0, 2.0, 2.0)
+        obj.dimensions = MockVector(radius * 2, radius * 2, radius * 2)
         mock_data.meshes.append(mesh)
         return {"FINISHED"}
 
     def mock_cylinder_add(radius=1.0, depth=2.0, location=(0, 0, 0), **kwargs):
         mesh = MockMesh(name="CylinderMesh")
-        [mesh.vertices.add() for _ in range(66)]
-        for _ in range(64):
-            p = mesh.polygons.add()
-            p.vertices = [0, 1, 2, 3]  # Mock quad
+        # Add vertices to satisfy topology detection (default: 32 vertices = 66 verts total)
+        for _ in range(66):
+            mesh.vertices.add()
+        # Add faces to satisfy topology detection (32 segments = 32 side faces + 2 caps = 34 faces)
+        for _ in range(34):
+            mesh.polygons.add()
+        # Bounding box for cylinder
+        mesh.vertices[0].co = MockVector(-1, -1, -1)
+        mesh.vertices[1].co = MockVector(1, 1, 1)
+
         obj = MockObject(name="Cylinder", data=mesh)
-        obj._base_dimensions = MockVector(1.0, 1.0, 1.0)
-        obj.dimensions = MockVector(radius * 2, radius * 2, depth)
         _setup_new_object(obj, location)
+        # Unit cylinder: radius 1.0, depth 2.0 -> dimensions (2, 2, 2)
+        obj._base_dimensions = MockVector(2.0, 2.0, 2.0)
+        obj.dimensions = MockVector(radius * 2, radius * 2, depth)
         mock_data.meshes.append(mesh)
         return {"FINISHED"}
 
@@ -1529,10 +1723,12 @@ def setup_mock_bpy():
         mesh = MockMesh(name="MonkeyMesh")
         # Suzanne: 1200 verts / 1100 faces – well outside all primitive thresholds
         # (sphere range is 240-1000 verts, so 1200 is clearly complex mesh)
-        [mesh.vertices.add() for _ in range(1200)]
+        for _ in range(1200):
+            mesh.vertices.add()
         for _ in range(1100):
             p = mesh.polygons.add()
-            p.vertices = [0, 1, 2]  # Triangles (not quads)
+            p.vertices = MockCollection()
+            p.vertices.extend([0, 1, 2])  # Triangles (not quads)
         obj = MockObject(name="Suzanne", data=mesh)
         obj.dimensions = MockVector(2.0, 2.0, 2.0)
         _setup_new_object(obj)
@@ -1546,23 +1742,6 @@ def setup_mock_bpy():
     mock_ops.mesh.primitive_monkey_add = mock_monkey_add
     mock_ops.object.select_all = lambda action="TOGGLE": {"FINISHED"}
 
-    def mock_transform_apply(location=False, rotation=False, scale=False, **kwargs):
-        obj = mock_context.active_object
-        if not obj:
-            return {"FINISHED"}
-
-        if scale:
-            # Bake scale into base_dimensions
-            if hasattr(obj, "_base_dimensions"):
-                obj._base_dimensions.x *= obj.scale.x
-                obj._base_dimensions.y *= obj.scale.y
-                obj._base_dimensions.z *= obj.scale.z
-            obj.scale = MockVector(1, 1, 1)
-
-        return {"FINISHED"}
-
-    mock_ops.object.transform_apply = mock_transform_apply
-
     def mock_select_all(action="TOGGLE"):
         for obj in mock_data.objects:
             if action == "SELECT":
@@ -1575,33 +1754,80 @@ def setup_mock_bpy():
 
     mock_ops.object.select_all = mock_select_all
 
-    def mock_join():
-        active = mock_context.active_object
-        if not active:
-            selected = [obj for obj in mock_data.objects if getattr(obj, "_selected", False)]
-            if not selected:
-                return {"CANCELLED"}
-            active = selected[-1]
-
-        to_remove = [
-            obj for obj in mock_data.objects if getattr(obj, "_selected", False) and obj != active
-        ]
-        for obj in to_remove:
-            if obj in mock_data.objects:
-                mock_data.objects.remove(obj)
-        return {"FINISHED"}
-
-    mock_ops.object.join = mock_join
-    mock_ops.object.parent_set = lambda **kwargs: {"FINISHED"}
-    mock_ops.object.parent_clear = lambda **kwargs: {"FINISHED"}
-    mock_ops.object.delete = lambda **kwargs: {"FINISHED"}
-
     def mock_add_empty_link(**kwargs):
         name = kwargs.get("name", "base_link")
         obj = MockObject(name=name)
         obj.type = "EMPTY"
         _setup_new_object(obj)
         return {"FINISHED"}
+
+    def mock_duplicate():
+        selected = [obj for obj in mock_data.objects if getattr(obj, "_selected", False)]
+        for obj in selected:
+            new_obj = obj.copy()
+            new_obj.select_set(True)
+            # Blender makes the new one active if it was active
+            if obj == mock_context.active_object:
+                mock_context.active_object = new_obj
+                if mock_context.view_layer:
+                    mock_context.view_layer.objects.active = new_obj
+        return {"FINISHED"}
+
+    def mock_join():
+        active = mock_context.active_object
+        selected = [obj for obj in mock_data.objects if getattr(obj, "_selected", False)]
+        if not active or not selected or active.type != "MESH":
+            return {"CANCELLED"}
+
+        for obj in selected:
+            if obj == active or obj.type != "MESH":
+                continue
+            # Merge vertices
+            offset = len(active.data.vertices)
+            for v in obj.data.vertices:
+                nv = active.data.vertices.add()
+                nv.co = MockVector(v.co)
+            # Merge polygons
+            for poly in obj.data.polygons:
+                np = active.data.polygons.add()
+                np.vertices = MockCollection()
+                np.vertices.extend([idx + offset for idx in poly.vertices])
+            # Remove joined object
+            mock_data.objects.remove(obj)
+
+        # Clear cached dimensions
+        active._base_dimensions = MockVector(0, 0, 0)
+        return {"FINISHED"}
+
+    def mock_transform_apply(location=True, rotation=True, scale=True):
+        selected = [obj for obj in mock_data.objects if obj._selected]
+        for obj in selected:
+            if obj.type != "MESH":
+                continue
+            # Baking transform into vertices
+            mat = obj.matrix_local
+            for v in obj.data.vertices:
+                v.co = mat @ v.co
+
+            if location:
+                obj.location = (0, 0, 0)
+            if rotation:
+                obj.rotation_euler = (0, 0, 0)
+            if scale:
+                obj.scale = (1, 1, 1)
+
+            obj._update_matrix_local()
+            obj._base_dimensions = MockVector(0, 0, 0)  # Force recalculation
+        return {"FINISHED"}
+
+    if not hasattr(mock_ops, "object"):
+        mock_ops.object = DynamicModule("bpy.ops.object")
+    mock_ops.object.join = mock_join
+    mock_ops.object.duplicate = mock_duplicate
+    mock_ops.object.transform_apply = mock_transform_apply
+    mock_ops.object.parent_set = lambda **kwargs: {"FINISHED"}
+    mock_ops.object.parent_clear = lambda **kwargs: {"FINISHED"}
+    mock_ops.object.delete = lambda **kwargs: {"FINISHED"}
 
     if not hasattr(mock_ops, "linkforge"):
         mock_ops.linkforge = DynamicModule("bpy.ops.linkforge")
@@ -1770,8 +1996,13 @@ def setup_mock_bpy():
 
     class MockBMesh:
         def __init__(self):
-            self.verts = MockCollection(prop_type=lambda: MockPropertyGroup(co=MockVector()))
-            self.faces = MockCollection(prop_type=lambda: MockPropertyGroup(verts=[]))
+            self.verts = MockCollection(
+                prop_type=lambda **kwargs: MockPropertyGroup(co=MockVector(), **kwargs)
+            )
+            self.polygons = MockCollection(
+                prop_type=lambda **kwargs: MockPropertyGroup(vertices=MockCollection(), **kwargs)
+            )
+            self.faces = self.polygons  # Alias for bmesh
 
         def from_mesh(self, mesh):
             self.verts.clear()
@@ -1784,7 +2015,8 @@ def setup_mock_bpy():
             self.faces.clear()
             for poly in mesh.polygons:
                 bm_f = self.faces.add()
-                bm_f.verts = [v_list[i] for i in poly.vertices if i < len(v_list)]
+                bm_f.vertices = MockCollection()
+                bm_f.vertices.extend([v_list[i] for i in poly.vertices if i < len(v_list)])
 
         def to_mesh(self, mesh):
             mesh.vertices.clear()
@@ -1797,56 +2029,52 @@ def setup_mock_bpy():
             mesh.polygons.clear()
             for f in self.faces:
                 m_p = mesh.polygons.add()
-                # Link vertices by index
-                m_p.vertices = [v_map.get(v, 0) for v in getattr(f, "verts", [])]
+                m_p.vertices = MockCollection()
+                m_p.vertices.extend([v_map[v] for v in f.vertices if v in v_map])
+
+            # Clear cached dimensions since mesh changed
+            if hasattr(mesh, "id_data") and mesh.id_data:
+                mesh.id_data._base_dimensions = MockVector(0, 0, 0)
 
         def free(self):
             pass
 
-    mock_bmesh.new = lambda: MockBMesh()
+    mock_bmesh.new = MockBMesh
     mock_bmesh.ops = DynamicModule("bmesh.ops")
 
-    def mock_create_cube(bm, size=2.0, **kwargs):
-        # Create 8 vertices for a cube
-        s = size / 2.0
+    def mock_create_cube(bm, size=2.0, matrix=None):
+        half = size / 2.0
         coords = [
-            (-s, -s, -s),  # 0
-            (s, -s, -s),  # 1
-            (s, s, -s),  # 2
-            (-s, s, -s),  # 3
-            (-s, -s, s),  # 4
-            (s, -s, s),  # 5
-            (s, s, s),  # 6
-            (-s, s, s),  # 7
+            (-half, -half, -half),
+            (half, -half, -half),
+            (half, half, -half),
+            (-half, half, -half),
+            (-half, -half, half),
+            (half, -half, half),
+            (half, half, half),
+            (-half, half, half),
         ]
-        verts = []
+        bm_verts = []
         for c in coords:
             v = bm.verts.add()
             v.co = MockVector(c)
-            verts.append(v)
-
+            bm_verts.append(v)
+        # 6 faces
         face_indices = [
             (0, 1, 2, 3),
             (4, 5, 6, 7),
-            (0, 1, 5, 4),
-            (1, 2, 6, 5),
-            (2, 3, 7, 6),
-            (3, 0, 4, 7),
+            (0, 4, 5, 1),
+            (1, 5, 6, 2),
+            (2, 6, 7, 3),
+            (3, 7, 4, 0),
         ]
-        faces = []
         for indices in face_indices:
             f = bm.faces.add()
-            f.verts = [verts[i] for i in indices]
-            faces.append(f)
-
-        return (verts, faces)
+            f.vertices = MockCollection()
+            f.vertices.extend([bm_verts[i] for i in indices])
 
     mock_bmesh.ops.create_cube = mock_create_cube
-    mock_bmesh.ops.create_uvsphere = lambda bm, **kwargs: (
-        [bm.verts.add() for _ in range(482)],
-        [bm.faces.add() for _ in range(480)],
-    )
-    mock_bmesh.ops.convex_hull = lambda bm, **kwargs: None
+    mock_bmesh.ops.convex_hull = lambda bm, **kwargs: None  # Mock hull as identity
 
     # System Module Promotion (Persistence)
     mock_extras = DynamicModule("bpy_extras")

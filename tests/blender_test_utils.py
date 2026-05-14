@@ -230,10 +230,12 @@ def create_robot_link(
     scene: typing.Any,
     parent: typing.Any | None = None,
     with_visual: bool = True,
+    with_collision: bool = True,
+    with_cube: bool = True,
 ) -> typing.Any:
     """High-level factory to create a LinkForge robot link.
 
-    Creates an Empty object as the link frame and optionally a child visual mesh.
+    Creates an Empty object as the link frame and optionally child meshes.
     """
     link_obj = create_test_object(name, None, scene=scene)
 
@@ -243,8 +245,14 @@ def create_robot_link(
         link_obj.parent = parent
 
     if with_visual:
-        mesh_obj = create_mesh_object(f"{name}_visual", scene=scene)
+        mesh_obj = create_mesh_object(f"{name}_visual", scene=scene, with_cube=with_cube)
         mesh_obj.parent = link_obj
+        safe_get_linkforge(mesh_obj, scene).is_robot_visual = True
+
+    if with_collision:
+        mesh_obj = create_mesh_object(f"{name}_collision", scene=scene, with_cube=with_cube)
+        mesh_obj.parent = link_obj
+        safe_get_linkforge(mesh_obj, scene).is_robot_collision = True
 
     if scene.view_layers:
         scene.view_layers[0].update()
@@ -344,8 +352,8 @@ def cleanup_blender_scene(scene: typing.Any | None = None) -> None:
 
     # Reset Scene properties
     target_scene = scene or bpy.context.scene
-    if target_scene and hasattr(target_scene, "linkforge"):
-        props = target_scene.linkforge
+    props = getattr(target_scene, "linkforge", None)
+    if props:
         props.robot_name = "robot"
         props.strict_mode = False
         props.use_ros2_control = False

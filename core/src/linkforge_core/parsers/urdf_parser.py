@@ -57,6 +57,7 @@ from ..models import (
     Robot,
     Ros2Control,
     Ros2ControlJoint,
+    Ros2ControlSensor,
     Sensor,
     SensorNoise,
     SensorType,
@@ -482,10 +483,32 @@ class URDFParser(RobotXMLParser[Robot]):
                     )
                 )
 
+        sensors: list[Ros2ControlSensor] = []
+        for sensor_elem in rc_elem.findall("{*}sensor"):
+            sensor_name = sensor_elem.get("name", "")
+            state_interfaces = [
+                self._normalize_hardware_interface(state.get("name", "position"))
+                for state in sensor_elem.findall("{*}state_interface")
+            ]
+            sensor_params: dict[str, str] = {
+                str(param.get("name")): param.text.strip()
+                for param in sensor_elem.findall("{*}param")
+                if param.get("name") and param.text
+            }
+
+            if state_interfaces or sensor_params:
+                sensors.append(
+                    Ros2ControlSensor(
+                        name=sensor_name,
+                        state_interfaces=state_interfaces,
+                        parameters=sensor_params,
+                    )
+                )
+
         # Catch-all for top-level parameters not inside <hardware>
         for child in rc_elem:
-            if child.tag not in ("hardware", "joint") and child.text:
-                parameters[child.tag] = child.text.strip()
+            if strip_xml_namespace(child.tag) not in ("hardware", "joint", "sensor") and child.text:
+                parameters[strip_xml_namespace(child.tag)] = child.text.strip()
 
         try:
             return Ros2Control(
@@ -493,6 +516,7 @@ class URDFParser(RobotXMLParser[Robot]):
                 type=rc_type,
                 hardware_plugin=hardware_plugin,
                 joints=joints,
+                sensors=sensors,
                 parameters=parameters,
             )
         except RobotModelError as e:
@@ -1007,26 +1031,26 @@ class URDFParser(RobotXMLParser[Robot]):
 
                     elif tag == "gazebo":
                         try:
+                            # 1. Try to extract a sensor if present
                             sensor = self._parse_sensor_from_gazebo(elem)
                             if sensor:
                                 delayed_sensors.append(sensor)
-                            else:
-                                # Extract physics fields before they are lost
-                                physics_data = {
-                                    "mu": parse_optional_float(elem, "mu1", default=None),
-                                    "mu2": parse_optional_float(elem, "mu2", default=None),
-                                    "kp": parse_optional_float(elem, "kp", default=None),
-                                    "kd": parse_optional_float(elem, "kd", default=None),
-                                    "self_collide": parse_optional_bool(elem, "selfCollide"),
-                                    "gravity": parse_optional_bool(elem, "gravity"),
-                                }
-                                # Filter out None values
-                                physics_data = {
-                                    k: v for k, v in physics_data.items() if v is not None
-                                }
-                                delayed_gazebo_elements.append(
-                                    (self._parse_gazebo_element(elem), physics_data)
-                                )
+
+                            # 2. Extract physics fields (regardless of sensor presence)
+                            physics_data = {
+                                "mu": parse_optional_float(elem, "mu1", default=None),
+                                "mu2": parse_optional_float(elem, "mu2", default=None),
+                                "kp": parse_optional_float(elem, "kp", default=None),
+                                "kd": parse_optional_float(elem, "kd", default=None),
+                                "self_collide": parse_optional_bool(elem, "selfCollide"),
+                                "gravity": parse_optional_bool(elem, "gravity"),
+                            }
+                            # Filter out None values
+                            physics_data = {k: v for k, v in physics_data.items() if v is not None}
+
+                            # 3. Extract other Gazebo metadata (plugins, material, properties)
+                            gazebo_elem = self._parse_gazebo_element(elem)
+                            delayed_gazebo_elements.append((gazebo_elem, physics_data))
                         except (RobotModelError, ValueError, Exception) as e:
                             logger.warning(
                                 f"Skipping invalid gazebo element '{elem.get('name') or elem.get('reference')}': {e}"
