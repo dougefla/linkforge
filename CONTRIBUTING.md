@@ -72,7 +72,7 @@ just build
 ```
 linkforge/
 ├── core/                  # Core Robotics Logic (pip package)
-│   └── src/linkforge_core/
+│   └── src/linkforge/core/
 ├── platforms/
 │   └── blender/           # Blender Extension (.zip)
 ├── tests/                 # Test Suite (unit + integration)
@@ -195,7 +195,7 @@ just coverage
 uv run pytest tests/unit/core/test_robot.py
 
 # Run specific Blender integration test file (manual)
-uv run python blender_launcher.py tests/integration/platforms/blender/test_roundtrip.py
+uv run python scripts/blender_launcher.py tests/integration/platforms/blender/test_roundtrip.py
 ```
 
 ### Manual QA (Mandatory)
@@ -247,7 +247,7 @@ def test_sensor_roundtrip():
     urdf = generator.generate(robot)
 
     # Re-import
-    from linkforge_core.parsers import URDFParser
+    from linkforge.core import URDFParser
     robot2 = URDFParser().parse_string(urdf)
 
     # Verify sensor origin preserved
@@ -278,7 +278,7 @@ We follow a **Tiered Mocking Strategy** based on the level of interaction:
 ### Debugging in Blender
 
 ```python
-from linkforge_core.logging_config import get_logger
+from linkforge.core import get_logger
 logger = get_logger(__name__)
 logger.error(f"Debug: {variable}")
 
@@ -289,31 +289,32 @@ logger.error(f"Debug: {variable}")
 
 ### Python Style Guide
 
-We follow **PEP 8** with some modifications. Always use **type hints** and **Google-style docstrings** (required for ReadTheDocs API docs):
+### Documentation Standards (Lean Google Style)
+
+We follow a **Lean Google Style** for documentation. Every module and class must be documented to provide high-level context and component breakdowns:
+
+1.  **Module Headers**: Summarize the purpose and categorize key components (Models, Validators, Utilities).
+2.  **Concise Summaries**: Focus on *intent* and *physical implications* rather than just restating the signature.
+3.  **Core Components**: Use a structured list in module docstrings to identify the main actors.
 
 ```python
-# Good: Clear, typed, documented
-def calculate_inertia(geometry: Box, mass: float) -> InertiaTensor:
-    """Calculate inertia tensor for a box.
+"""Module title.
 
-    Args:
-        geometry: Box geometry with dimensions
-        mass: Total mass in kg
+Brief high-level summary of role in the IR.
 
-    Returns:
-        Inertia tensor for the box
-
-    Raises:
-        RobotModelError: If mass is non-positive
-    """
-    if mass <= 0:
-        raise RobotModelError("Mass must be positive")
-
-    # Calculate moments of inertia
-    ixx = (mass / 12.0) * (geometry.size.y**2 + geometry.size.z**2)
-    # ...
-    return InertiaTensor(ixx=ixx, ...)
+Core Components:
+    - ComponentA: Brief role description.
+    - ComponentB: Brief role description.
+"""
 ```
+
+### "Physics as Truth" Design Principle
+
+LinkForge follows a strict **Physics as Truth** philosophy. The Intermediate Representation (IR) is not just a data structure; it is a physical model that must remain stable and plausible at all times.
+
+- **Strict Validation**: All models (Link, Joint, Sensor) must implement `__post_init__` guardrails for physical properties (e.g., non-negative mass, normalized axes, valid LIDAR ranges).
+- **Orchestrated Checks**: Global consistency (cycles, connectivity, ros2_control limits) is enforced by the `RobotValidator`.
+- **Fail Fast**: We prefer a `RobotValidationError` at construction time over a physics engine crash at runtime.
 
 ```python
 # Good ✅
@@ -424,7 +425,7 @@ While LinkForge supports `ros2_control`, it is designed to be distribution-agnos
 
 ### 4. Validation Extensibility (Quality Control)
 To maintain the highest standards of robot description quality, LinkForge uses a **Modular Validation Registry**.
-- **The Rule**: Every new core model feature must be accompanied by a corresponding `ValidationCheck` in `core/src/linkforge_core/validation/checks.py`.
+- **The Rule**: Every new core model feature must be accompanied by a corresponding `ValidationCheck` in `core/src/linkforge/core/validation/checks.py`.
 - **Implementation**: Inherit from `ValidationCheck`, implement the `run()` method, and append your class to `RobotValidator.DEFAULT_CHECKS`.
 - **Testing**: Add isolated unit tests for your new check in `tests/unit/core/test_validation_checks.py`.
 

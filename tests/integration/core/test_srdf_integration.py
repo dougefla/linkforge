@@ -1,13 +1,14 @@
-from linkforge_core.generators.srdf_generator import SRDFGenerator
-from linkforge_core.models.robot import Robot
-from linkforge_core.parsers.srdf_parser import SRDFParser
-from linkforge_core.parsers.urdf_parser import URDFParser
+from linkforge.core import Robot, SRDFGenerator, SRDFParser, URDFParser
 
 # Simplified URDF for integration testing
 SAMPLE_URDF = """<?xml version="1.0"?>
 <robot name="panda">
-  <link name="base_link"/>
-  <link name="link1"/>
+  <link name="base_link">
+    <inertial><mass value="1.0"/><inertia ixx="0.01" iyy="0.01" izz="0.01" ixy="0" ixz="0" iyz="0"/></inertial>
+  </link>
+  <link name="link1">
+    <inertial><mass value="1.0"/><inertia ixx="0.01" iyy="0.01" izz="0.01" ixy="0" ixz="0" iyz="0"/></inertial>
+  </link>
   <joint name="joint1" type="revolute">
     <parent link="base_link"/>
     <child link="link1"/>

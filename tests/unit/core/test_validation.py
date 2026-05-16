@@ -3,8 +3,14 @@
 from __future__ import annotations
 
 import pytest
-from linkforge_core.exceptions import RobotValidationError, ValidationErrorCode
-from linkforge_core.models import Joint, JointType, Link, Robot
+from linkforge.core import (
+    Joint,
+    JointType,
+    Link,
+    Robot,
+    RobotValidationError,
+    ValidationErrorCode,
+)
 
 
 def test_tree_structure_validation() -> None:
@@ -46,7 +52,3 @@ def test_multiple_root_links_validation() -> None:
     with pytest.raises(RobotValidationError) as exc:
         robot.get_root_link()
     assert exc.value.code == ValidationErrorCode.MULTIPLE_ROOTS
-
-
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])

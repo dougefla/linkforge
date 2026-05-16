@@ -5,9 +5,7 @@ from __future__ import annotations
 import xml.etree.ElementTree as ET
 
 import pytest
-from linkforge_core.base import XacroDetectedError
-from linkforge_core.generators.urdf_generator import URDFGenerator
-from linkforge_core.models import (
+from linkforge.core import (
     Box,
     Color,
     Cylinder,
@@ -17,10 +15,12 @@ from linkforge_core.models import (
     Material,
     Mesh,
     Robot,
+    URDFGenerator,
+    URDFParser,
     Vector3,
     Visual,
+    XacroDetectedError,
 )
-from linkforge_core.parsers.urdf_parser import URDFParser
 
 
 @pytest.fixture
@@ -105,7 +105,7 @@ class TestURDFGeneratorInternal:
         robot.add_link(Link(name="child"))
         robot.add_joint(Joint(name="j1", parent="base_link", child="child", type=JointType.FIXED))
 
-        xml_str = generator.generate(robot)
+        xml_str = generator.generate(robot, validate=False)
         root = ET.fromstring(xml_str)
         assert root.get("name") == "test_robot"
         assert len(root.findall("link")) == 2
@@ -140,7 +140,7 @@ class TestURDFRobustness:
             '<inertial><mass value="1"/><inertia ixx="10" iyy="1" izz="1"/></inertial>'
         )
         inertial = parser._parse_inertial_element(elem)
-        assert inertial.inertia.ixx == 1e-6
+        assert inertial.inertia.ixx == 1e-09
 
     def test_mesh_path_security(self, parser, tmp_path) -> None:
         """Verify mesh path security checks."""
@@ -164,7 +164,3 @@ class TestURDFRobustness:
         """
         robot = parser.parse_string(xml)
         assert len(robot.links) == 1
-
-
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])

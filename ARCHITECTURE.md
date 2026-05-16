@@ -26,7 +26,7 @@ graph LR
     Adapters --> Viz
 ```
 
-### 2. Core Logic Layer (`core/src/linkforge_core/`)
+### 2. Core Logic Layer (`core/src/linkforge/core/`)
 The platform-independent heart of the project. **Strictly Zero-Dependency.**
 
 ```mermaid
@@ -36,10 +36,13 @@ graph TB
         Composer[Composer API<br/>RobotBuilder/Assembly]
         Physics[Physics Engine<br/>Inertia/Validation]
         IO[Parsers & Generators<br/>URDF/XACRO/SRDF]
+        Shortcuts[Functional API<br/>io.py / Shortcuts]
     end
     Composer --> Models
     IO --> Models
     Physics --> Models
+    Shortcuts --> IO
+    Shortcuts --> Physics
 ```
 
 ---
@@ -81,9 +84,9 @@ sequenceDiagram
 ## ⚡ Performance & Security
 *   **Numerical Stability**: We use local origin-shifting (numerical conditioning) for all inertia integrals.
 *   **Linear Scaling**: Inertia and Topology checks scale linearly with vertex/triangle count ($O(V+T)$).
-*   **Resource Guards**: Hard limits on XML nesting (100 levels) and file sizes (100MB) to prevent resource exhaustion attacks.
+*   **Resource Guards**: Hard limits on XML nesting (2000 levels) and file sizes (100MB) to prevent resource exhaustion attacks.
 
 ---
 
-**Last Updated:** 2026-05-13
-**Version:** 1.4.0
+**Last Updated:** 2026-05-16
+**Version:** 1.3.0

@@ -9,9 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from linkforge_core.models import Robot
-from linkforge_core.parsers.urdf_parser import URDFParser
-from linkforge_core.parsers.xacro_parser import XACROParser
+from linkforge.core import Box, Robot, URDFParser, XACROParser
 
 
 @pytest.fixture
@@ -78,8 +76,6 @@ def test_xacro_dimensions_and_math(tmp_path: Path, xacro_to_robot) -> None:
 
     robot = xacro_to_robot(xacro_file)
 
-    from linkforge_core.models import Box
-
     geom = robot.links[0].visuals[0].geometry
     assert isinstance(geom, Box)
     assert geom.size.x == 2.0
@@ -99,7 +95,3 @@ def test_empty_xacro_handling(tmp_path: Path, xacro_to_robot) -> None:
     robot = xacro_to_robot(xacro_file)
     assert robot.name == "empty"
     assert len(robot.links) == 0
-
-
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])

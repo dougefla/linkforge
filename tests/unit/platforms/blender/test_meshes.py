@@ -9,7 +9,7 @@ from linkforge.blender.adapters.mesh_io import (
     export_mesh_obj,
     export_mesh_stl,
 )
-from linkforge_core.utils.path_utils import resolve_package_path
+from linkforge.core._utils.path_utils import resolve_package_path
 
 from tests.blender_test_utils import create_test_object
 
@@ -88,7 +88,3 @@ class TestMeshRobustness:
             mock_wm.stl_export.side_effect = TypeError("Unexpected")
             with pytest.raises(TypeError):
                 export_mesh_stl(obj, filepath)
-
-
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])

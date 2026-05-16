@@ -3,12 +3,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-from linkforge_core.base import RobotParserError, XacroDetectedError
-from linkforge_core.exceptions import (
-    RobotModelError,
-    RobotParserIOError,
-)
-from linkforge_core.models import (
+from linkforge.core import (
     Box,
     CameraInfo,
     Color,
@@ -16,11 +11,16 @@ from linkforge_core.models import (
     JointType,
     Material,
     Mesh,
+    RobotModelError,
+    RobotParserError,
+    RobotParserIOError,
     Sensor,
     SensorType,
     Sphere,
+    URDFParser,
+    XacroDetectedError,
 )
-from linkforge_core.parsers.urdf_parser import URDFParser
+from linkforge.core.constants import MIN_REASONABLE_INERTIA
 
 
 class TestURDFParser:
@@ -407,8 +407,6 @@ class TestURDFParser:
 
     def test_urdf_parser_security(self) -> None:
         """Test security limits."""
-        from linkforge_core.base import RobotParserError
-        from linkforge_core.parsers.urdf_parser import URDFParser
 
         # Test max file size
         parser = URDFParser(max_file_size=10)
@@ -417,7 +415,6 @@ class TestURDFParser:
 
     def test_urdf_parser_robustness(self) -> None:
         """Test duplicate name handling (should skip duplicate)."""
-        from linkforge_core.parsers.urdf_parser import URDFParser
 
         xml = """
         <robot name="dupe_bot">
@@ -515,7 +512,6 @@ class TestURDFParser:
 
     def test_urdf_parser_file_parsing(self, tmp_path) -> None:
         """Test parsing from a file using iterative parser."""
-        from linkforge_core.parsers.urdf_parser import URDFParser
 
         urdf_content = """
         <robot name="file_robot">
@@ -533,8 +529,6 @@ class TestURDFParser:
 
     def test_urdf_parser_xacro_extension_check(self, tmp_path) -> None:
         """Test that .xacro extension raises error."""
-        from linkforge_core.base import RobotParserError
-        from linkforge_core.parsers.urdf_parser import URDFParser
 
         xacro_file = tmp_path / "robot.urdf.xacro"
         xacro_file.write_text("<robot/>")
@@ -715,8 +709,8 @@ class TestURDFParser:
         robot = parser.parse_string(xml)
         assert robot.links[0].inertial is not None
         inertia = robot.links[0].inertial.inertia
-        assert inertia.ixx == 1e-6
-        assert inertia.izz == 1e-6
+        assert inertia.ixx == MIN_REASONABLE_INERTIA
+        assert inertia.izz == MIN_REASONABLE_INERTIA
 
     def test_sensor_defaults(self) -> None:
         """Test default info creation for sensors missing specific tags."""
@@ -809,7 +803,6 @@ class TestURDFParser:
 
     def test_parse_file_not_found(self) -> None:
         """Test parsing a non-existent file."""
-        from linkforge_core.parsers.urdf_parser import URDFParser
 
         parser = URDFParser()
         with pytest.raises(RobotParserIOError, match="File not found"):
@@ -817,7 +810,6 @@ class TestURDFParser:
 
     def test_parse_invalid_root(self, tmp_path) -> None:
         """Test parsing an XML with invalid root element."""
-        from linkforge_core.parsers.urdf_parser import URDFParser
 
         invalid_urdf = tmp_path / "invalid.urdf"
         invalid_urdf.write_text("<not_robot></not_robot>")
@@ -829,7 +821,6 @@ class TestURDFParser:
 
     def test_parse_string_unexpected_error(self) -> None:
         """Test unexpected error during string parsing."""
-        from linkforge_core.parsers.urdf_parser import URDFParser
 
         parser = URDFParser()
         with (
@@ -933,7 +924,6 @@ class TestURDFParser:
 
     def test_parse_robot_full_traversal(self) -> None:
         """Hit edge cases in _parse_robot that aren't hit by iterparse."""
-        from linkforge_core.parsers.urdf_parser import URDFParser
 
         # Defines a robot with features that trigger specific loops in _parse_robot
         xml = """
@@ -959,7 +949,6 @@ class TestURDFParser:
 
     def test_parse_gazebo_element_with_plugins(self) -> None:
         """Gazebo element with only a plugin (no sensor) is stored as a GazeboElement."""
-        from linkforge_core.parsers.urdf_parser import URDFParser
 
         parser = URDFParser()
         xml = """
@@ -977,8 +966,6 @@ class TestURDFParser:
     def test_parse_file_iterparse_error(self, tmp_path) -> None:
         """A malformed XML file raises RobotParserError with a clear message."""
         from unittest import mock
-
-        from linkforge_core.parsers.urdf_parser import URDFParser
 
         path = tmp_path / "test.urdf"
         path.touch()
@@ -1073,7 +1060,7 @@ class TestURDFParser:
         # We now create a valid Inertial with zero() tensor instead of None
         assert robot.links[0].inertial is not None
         assert robot.links[0].inertial.mass == 2.0
-        assert robot.links[0].inertial.inertia.ixx == 1e-6
+        assert robot.links[0].inertial.inertia.ixx == MIN_REASONABLE_INERTIA
 
     def test_link_with_negative_inertia_is_sanitized(self) -> None:
         """Link inertia with negative diagonal values are sanitized to 1e-6."""
@@ -1087,9 +1074,9 @@ class TestURDFParser:
         robot = parser.parse_string(xml)
         assert robot.links[0].inertial is not None
         t = robot.links[0].inertial.inertia
-        assert t.ixx == pytest.approx(1e-6)
-        assert t.iyy == pytest.approx(1e-6)
-        assert t.izz == pytest.approx(1e-6)
+        assert t.ixx == pytest.approx(MIN_REASONABLE_INERTIA)
+        assert t.iyy == pytest.approx(MIN_REASONABLE_INERTIA)
+        assert t.izz == pytest.approx(MIN_REASONABLE_INERTIA)
 
     def test_collision_with_no_geometry_is_skipped(self) -> None:
         """Collision element without any geometry child is silently not added."""
@@ -1118,7 +1105,7 @@ class TestURDFParser:
         # Should not raise — just skip the transmission
         robot = parser.parse_string(xml)
         assert isinstance(
-            robot, __import__("linkforge_core.models.robot", fromlist=["Robot"]).Robot
+            robot, __import__("linkforge.core.models.robot", fromlist=["Robot"]).Robot
         )
 
     def test_camera_sensor_without_image_element_uses_defaults(self) -> None:
@@ -1143,7 +1130,7 @@ class TestURDFParser:
             <sensor type="contact" name="ct0"></sensor>
         </gazebo></robot>"""
         parser = URDFParser()
-        with patch("linkforge_core.parsers.urdf_parser.logger") as mock_logger:
+        with patch("linkforge.core.parsers.urdf_parser.logger") as mock_logger:
             robot = parser.parse_string(xml)
             assert len(robot.sensors) == 0
             assert mock_logger.warning.called
@@ -1151,7 +1138,6 @@ class TestURDFParser:
     def test_parse_string_with_robot_parser_error_reraises(self) -> None:
         """RobotParserError from within parse_string passes through unchanged."""
         import pytest
-        from linkforge_core.base import XacroDetectedError
 
         xml = """<robot name="r"><xacro:if value="1"><link name="l1"/></xacro:if></robot>"""
         parser = URDFParser()
@@ -1241,7 +1227,6 @@ class TestURDFParser:
 
     def test_parse_file_too_large_raises_error(self, tmp_path) -> None:
         """Parser raises RobotParserError if the file exceeds max_file_size."""
-        from linkforge_core.base import RobotParserError
 
         urdf_file = tmp_path / "big.urdf"
         urdf_file.write_text("<robot name='r'><link name='l1'/></robot>")
@@ -1252,7 +1237,6 @@ class TestURDFParser:
 
     def test_parse_file_xacro_string_too_large_raises_error(self) -> None:
         """parse_string raises RobotParserError if the string exceeds max_file_size."""
-        from linkforge_core.base import RobotParserError
 
         content = "<robot name='r'>" + "<link name='l1'/>" * 10 + "</robot>"
         parser = URDFParser()
@@ -1324,8 +1308,6 @@ class TestURDFParser:
 def test_urdf_parser_unnamed_gazebo_element_parsing() -> None:
     """Verify that Gazebo elements without a reference attribute are parsed correctly with None reference."""
     import xml.etree.ElementTree as ET
-
-    from linkforge_core.parsers.urdf_parser import URDFParser
 
     parser = URDFParser()
     xml = "<gazebo><material>Gazebo/Grey</material></gazebo>"

@@ -5,9 +5,7 @@ from __future__ import annotations
 import math
 
 import pytest
-from linkforge_core.exceptions import RobotModelError
-from linkforge_core.models import Transform, Vector3
-from linkforge_core.models.joint import (
+from linkforge.core import (
     Joint,
     JointCalibration,
     JointDynamics,
@@ -15,6 +13,13 @@ from linkforge_core.models.joint import (
     JointMimic,
     JointSafetyController,
     JointType,
+    RobotModelError,
+    Transform,
+    Vector3,
+)
+from linkforge.core.constants import (
+    DEFAULT_JOINT_EFFORT,
+    DEFAULT_JOINT_VELOCITY,
 )
 
 
@@ -52,8 +57,8 @@ class TestJointLimits:
     def test_default_effort_velocity(self) -> None:
         """Test default values for effort and velocity."""
         limits = JointLimits(lower=-1.0, upper=1.0)
-        assert limits.effort == 0.0
-        assert limits.velocity == 0.0
+        assert limits.effort == DEFAULT_JOINT_EFFORT
+        assert limits.velocity == DEFAULT_JOINT_VELOCITY
 
 
 class TestJointDynamics:

@@ -5,15 +5,13 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 import bpy
-import pytest
 from linkforge.blender.operators.export_ops import (
     LINKFORGE_OT_export_robot_model,
     LINKFORGE_OT_validate_robot,
 )
+from linkforge.core import ValidationResult
 
-from tests.blender_test_utils import (
-    safe_get_linkforge_scene,
-)
+from tests.blender_test_utils import safe_get_linkforge_scene
 
 # Robot Validation Operator
 
@@ -27,8 +25,7 @@ class TestRobotValidation:
         val_res = MagicMock()
         val_res.is_valid = True
         val_res.has_warnings = False
-        mocker.patch("linkforge_core.validation.RobotValidator.validate", return_value=val_res)
-        from linkforge_core.validation import ValidationResult
+        mocker.patch("linkforge.core.validation.RobotValidator.validate", return_value=val_res)
 
         val_res_obj = ValidationResult()
 
@@ -49,8 +46,7 @@ class TestRobotValidation:
         val_res.is_valid = False
         val_res.error_count = 1
         val_res.errors = [MagicMock(message="Test Error")]
-        mocker.patch("linkforge_core.validation.RobotValidator.validate", return_value=val_res)
-        from linkforge_core.validation import ValidationResult
+        mocker.patch("linkforge.core.validation.RobotValidator.validate", return_value=val_res)
 
         mocker.patch(
             "linkforge.blender.adapters.blender_to_core.scene_to_robot",
@@ -76,14 +72,12 @@ class TestRobotExport:
         mock_self.filepath = "/tmp/robot.xacro"  # Wrong extension
         mock_self.report = MagicMock()
 
-        from linkforge_core.validation import ValidationResult
-
         mocker.patch(
             "linkforge.blender.adapters.blender_to_core.scene_to_robot",
             return_value=(MagicMock(), ValidationResult()),
         )
         mocker.patch(
-            "linkforge_core.generators.urdf_generator.URDFGenerator.generate", return_value="<xml/>"
+            "linkforge.core.generators.urdf_generator.URDFGenerator.generate", return_value="<xml/>"
         )
 
         LINKFORGE_OT_export_robot_model.execute(mock_self, bpy.context)
@@ -98,7 +92,3 @@ class TestRobotExport:
         with patch("bpy_extras.io_utils.ExportHelper.invoke", return_value={"FINISHED"}):
             LINKFORGE_OT_export_robot_model.invoke(mock_op, bpy.context, MagicMock())
             assert mock_op.filename_ext == ".xacro"
-
-
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])

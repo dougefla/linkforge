@@ -70,15 +70,15 @@ Regular markdown content.
 
 ## Code Examples
 
-\`\`\`python
-from linkforge_core.models import Robot
+```python
+from linkforge.core import Robot
 
 robot = Robot(name="my_robot")
-\`\`\`
+```
 
 ## Cross-References
 
-See [Getting Started](getting_started.md) for more info.
+See [Contributing Guide](CONTRIBUTING.md) for more info.
 ```
 
 ### API Documentation
@@ -89,7 +89,7 @@ API docs use Sphinx autodoc with reStructuredText:
 # Module Name
 
 ```{eval-rst}
-.. autoclass:: linkforge_core.models.Robot
+.. autoclass:: linkforge.core.Robot
    :members:
    :undoc-members:
    :show-inheritance:
@@ -163,7 +163,7 @@ uv add --dev linkify-it-py
 Use relative paths for local files:
 
 ```markdown
-See [Architecture](ARCHITECTURE.md) for details.
+See [Architecture](../ARCHITECTURE.md) for details.
 ```
 
 ### Build warnings

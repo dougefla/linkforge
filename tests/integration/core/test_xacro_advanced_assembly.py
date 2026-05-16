@@ -9,9 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from linkforge_core.models import Box, Robot
-from linkforge_core.parsers.urdf_parser import URDFParser
-from linkforge_core.parsers.xacro_parser import RobotXacroError, XACROParser
+from linkforge.core import Box, Robot, RobotXacroError, URDFParser, XACROParser
 
 
 @pytest.fixture
@@ -185,7 +183,3 @@ def test_xacro_error_propagation_to_parser(tmp_path: Path) -> None:
     with pytest.raises(RobotXacroError) as excinfo:
         XACROParser().resolve(bad_xacro)
     assert "undefined_var" in str(excinfo.value)
-
-
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])

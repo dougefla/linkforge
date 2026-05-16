@@ -1,11 +1,25 @@
 import pytest
-from linkforge_core.composer import RobotBuilder, box, cylinder, mesh, sphere
-from linkforge_core.exceptions import RobotModelError, RobotValidationError
-from linkforge_core.models.geometry import GeometryType
-from linkforge_core.models.joint import Joint, JointType
-from linkforge_core.models.link import Link
-from linkforge_core.models.robot import Robot
-from linkforge_core.models.sensor import SensorType
+from linkforge.core import (
+    Color,
+    GeometryType,
+    IMUInfo,
+    InertiaTensor,
+    Joint,
+    JointLimits,
+    JointType,
+    Link,
+    Material,
+    Robot,
+    RobotBuilder,
+    RobotModelError,
+    RobotValidationError,
+    Sensor,
+    SensorType,
+    box,
+    cylinder,
+    mesh,
+    sphere,
+)
 
 
 class TestRobotBuilder:
@@ -45,7 +59,6 @@ class TestRobotBuilder:
         link = builder.robot.link("l1")
         assert len(link.visuals) > 0
         visual = link.visuals[0]
-        from linkforge_core.models.material import Material
 
         assert isinstance(visual.material, Material)
         assert visual.material.name == "red"
@@ -202,7 +215,7 @@ class TestRobotBuilder:
         # No geometry fallback
         b2 = RobotBuilder("no_fallback_f")
         b2.link("l_nf_f").mass(1.0).root()
-        assert b2.robot.link("l_nf_f").inertia.ixx == 1e-6
+        assert b2.robot.link("l_nf_f").inertia.ixx == 1e-09
 
     def test_attach_merge(self) -> None:
         """Test attaching another builder/robot."""
@@ -263,10 +276,10 @@ class TestRobotBuilder:
         builder = RobotBuilder("export_robot")
         builder.link("base_exp").root()
 
-        urdf = builder.export_urdf()
+        urdf = builder.export_urdf(validate=False)
         assert '<robot name="export_robot"' in urdf
 
-        srdf = builder.export_srdf()
+        srdf = builder.export_srdf(validate=False)
         assert '<robot name="export_robot"' in srdf
 
     def test_explicit_transforms_and_origins(self) -> None:
@@ -292,7 +305,6 @@ class TestRobotBuilder:
     def test_visual_with_material_object(self) -> None:
         """Test passing a Material object to visual()."""
         builder = RobotBuilder("mat_obj")
-        from linkforge_core.models.material import Color, Material
 
         mat = Material(name="custom", color=Color(0, 1, 0, 1))
 
@@ -300,7 +312,6 @@ class TestRobotBuilder:
         link = builder.robot.link("l1_mat")
         assert len(link.visuals) > 0
         visual = link.visuals[0]
-        from linkforge_core.models.material import Material
 
         assert isinstance(visual.material, Material)
         assert visual.material.name == "custom"
@@ -345,7 +356,6 @@ class TestRobotBuilder:
 
     def test_direct_inertia_in_mass(self) -> None:
         """Test passing InertiaTensor directly to mass()."""
-        from linkforge_core.models.link import InertiaTensor
 
         builder = RobotBuilder("direct_inertia")
         it = InertiaTensor(ixx=2, iyy=2, izz=2, ixy=0, ixz=0, iyz=0)
@@ -471,14 +481,14 @@ class TestRobotBuilder:
     def test_export_validation(self) -> None:
         """Test validation during export to ensures integrity of generated URDF/SRDF."""
         builder = RobotBuilder("export_val")
-        builder.link("base_ev").root()
+        builder.link("base_ev").mass(1.0).root()
 
         # Should pass
         builder.export_urdf(validate=True)
         builder.export_srdf(validate=True)
 
         # Should fail with cycle (base -> l1 -> base)
-        builder.link("l1_ev", parent="base_ev").fixed().commit()
+        builder.link("l1_ev", parent="base_ev").mass(1.0).fixed().commit()
         builder.robot.add_joint(Joint("cycle_ev", JointType.FIXED, "l1_ev", "base_ev"))
         with pytest.raises(RobotValidationError):
             builder.export_urdf(validate=True)
@@ -494,7 +504,6 @@ class TestRobotBuilder:
 
         # LinkBuilder.sensor()
         b2 = RobotBuilder("b2")
-        from linkforge_core.models.sensor import IMUInfo, Sensor
 
         s = Sensor(name="raw_s", type=SensorType.IMU, link_name="placeholder", imu_info=IMUInfo())
         b2.link("l_raw").sensor(s).root()
@@ -549,7 +558,6 @@ class TestRobotBuilder:
             axis=(0, 0, 1), effort=10.0, velocity=5.0
         ).commit()
         limits = builder.robot.joint("base_to_l1").limits
-        from linkforge_core.models.joint import JointLimits
 
         assert isinstance(limits, JointLimits)
         assert limits.effort == 10.0

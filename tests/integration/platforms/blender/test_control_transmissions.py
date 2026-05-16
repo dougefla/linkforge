@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import bpy
-import pytest
 from linkforge.blender.operators.export_ops import LINKFORGE_OT_export_robot_model
 from linkforge.blender.operators.transmission_ops import LINKFORGE_OT_create_transmission
 
@@ -88,7 +87,7 @@ class TestControlTransmissionsIntegration:
         from tests.blender_test_utils import safe_get_transmission
 
         t_props = safe_get_transmission(trans_obj)
-        t_props.transmission_type = "SIMPLE"
+        t_props.transmission_type = "simple"
         t_props.joint_name = j1
         t_props.mechanical_reduction = 50.0
 
@@ -113,7 +112,3 @@ class TestControlTransmissionsIntegration:
         assert "<transmission" in urdf_content
         assert '<joint name="j1">' in urdf_content
         assert "<mechanicalReduction>50</mechanicalReduction>" in urdf_content
-
-
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])

@@ -4,10 +4,18 @@ from typing import Any
 from unittest.mock import patch
 
 import pytest
-from linkforge_core.exceptions import RobotModelError, RobotParserError, XacroDetectedError
-from linkforge_core.models.geometry import Box
-from linkforge_core.parsers.urdf_parser import URDFParser
-from linkforge_core.parsers.xml_base import RobotXMLParser
+from linkforge.core import (
+    Box,
+    RobotModelError,
+    RobotParserError,
+    RobotXMLParser,
+    URDFParser,
+    XacroDetectedError,
+)
+from linkforge.core.constants import (
+    MAX_XML_DEPTH,
+    MIN_REASONABLE_INERTIA,
+)
 
 
 class MockXMLParser(RobotXMLParser[Any]):
@@ -50,8 +58,8 @@ def test_xml_base_inertia_sanitization() -> None:
     )
     inertial = parser._parse_inertial_element(elem)
     assert inertial is not None
-    # Minimal stable diagonal is 1e-6
-    assert inertial.inertia.ixx == 1e-6
+    # Minimal stable diagonal is MIN_REASONABLE_INERTIA
+    assert inertial.inertia.ixx == MIN_REASONABLE_INERTIA
 
 
 def test_xml_base_geometry_error_handling() -> None:
@@ -64,13 +72,13 @@ def test_xml_base_geometry_error_handling() -> None:
 
     # Path traversal attempt should trigger security check and return None
     elem = ET.fromstring('<geometry><mesh filename="/etc/passwd"/></geometry>')
-    with patch("linkforge_core.parsers.xml_base.logger") as mock_logger:
+    with patch("linkforge.core.parsers.xml_base.logger") as mock_logger:
         assert parser._parse_geometry_element(elem, base_directory=Path("/tmp")) is None
         assert "Security Violation" in mock_logger.warning.call_args[0][0]
 
     # Handle unknown geometry types during exception fallback
     elem = ET.fromstring('<geometry><box size="invalid"/></geometry>')
-    with patch("linkforge_core.parsers.xml_base.logger") as mock_logger:
+    with patch("linkforge.core.parsers.xml_base.logger") as mock_logger:
         assert parser._parse_geometry_element(elem) is None
         assert "[INVALID_VALUE]" in mock_logger.warning.call_args[0][0]
         assert "(target: Vector3)" in mock_logger.warning.call_args[0][0]
@@ -128,7 +136,7 @@ def test_urdf_parser_gazebo_sensor_parsing_robustness() -> None:
         </sensor>
     </gazebo>
     """
-    with patch("linkforge_core.parsers.urdf_parser.logger") as mock_logger:
+    with patch("linkforge.core.parsers.urdf_parser.logger") as mock_logger:
         sensor = parser._parse_sensor_from_gazebo(ET.fromstring(xml))
         assert sensor is not None
         assert mock_logger.warning.called
@@ -150,7 +158,7 @@ def test_urdf_parser_ros2_control_robustness() -> None:
     elem = ET.fromstring(
         '<ros2_control name="ctrl" type="invalid"><hardware><plugin>p</plugin></hardware></ros2_control>'
     )
-    with patch("linkforge_core.parsers.urdf_parser.logger") as mock_logger:
+    with patch("linkforge.core.parsers.urdf_parser.logger") as mock_logger:
         assert parser._parse_ros2_control(elem) is None
         assert mock_logger.warning.called
 
@@ -191,8 +199,6 @@ def test_urdf_parser_iterative_parsing_robustness(tmp_path) -> None:
     # XML nesting too deep
     import sys
 
-    from linkforge_core.utils.xml_utils import MAX_XML_DEPTH
-
     old_limit = sys.getrecursionlimit()
     sys.setrecursionlimit(max(old_limit, MAX_XML_DEPTH + 100))
     try:
@@ -213,9 +219,9 @@ def test_urdf_parser_iterative_parsing_robustness(tmp_path) -> None:
 
     # Invalid Link (trigger skip warning)
     xml = '<robot name="r"><link name="l"><visual><origin xyz="invalid"/></visual></link></robot>'
-    import linkforge_core.parsers.urdf_parser
+    import linkforge.core.parsers.urdf_parser
 
-    with patch.object(linkforge_core.parsers.urdf_parser, "logger") as mock_logger:
+    with patch.object(linkforge.core.parsers.urdf_parser, "logger") as mock_logger:
         parser.parse_string(xml)
         assert mock_logger.warning.called
 
@@ -240,9 +246,9 @@ def test_urdf_parser_joint_invalid_origin() -> None:
         </joint>
     </robot>
     """
-    import linkforge_core.parsers.urdf_parser
+    import linkforge.core.parsers.urdf_parser
 
-    with patch.object(linkforge_core.parsers.urdf_parser, "logger") as mock_logger:
+    with patch.object(linkforge.core.parsers.urdf_parser, "logger") as mock_logger:
         parser.parse_string(xml)
         assert mock_logger.warning.called
 

@@ -13,7 +13,7 @@ from linkforge.blender.adapters.core_to_blender import (
     import_robot_to_scene,
     normalize_and_consolidate_imported_objects,
 )
-from linkforge_core.models import (
+from linkforge.core import (
     Box,
     CameraInfo,
     Collision,
@@ -25,13 +25,16 @@ from linkforge_core.models import (
     IMUInfo,
     Inertial,
     Joint,
+    JointCalibration,
     JointDynamics,
     JointLimits,
     JointMimic,
+    JointSafetyController,
     JointType,
     LidarInfo,
     Link,
     LinkPhysics,
+    Material,
     Mesh,
     Robot,
     Ros2Control,
@@ -41,6 +44,9 @@ from linkforge_core.models import (
     SensorType,
     Sphere,
     Transform,
+    Transmission,
+    TransmissionActuator,
+    TransmissionJoint,
     Vector3,
     Visual,
 )
@@ -219,7 +225,7 @@ def test_create_joint_object_complex(scene, blender_context) -> None:
     # Verify properties
     assert joint_obj is not None
     props = safe_get_joint(joint_obj)
-    assert props.joint_type == "REVOLUTE"
+    assert props.joint_type == "revolute"
     assert props.axis == "Z"
     assert props.use_limits is True
     assert pytest.approx(props.limit_lower) == -1.57
@@ -230,7 +236,6 @@ def test_create_joint_object_complex(scene, blender_context) -> None:
 
 def test_create_joint_object_advanced_props(scene, blender_context) -> None:
     """Verify that safety controller and calibration are correctly synced to Blender properties."""
-    from linkforge_core.models import JointCalibration, JointSafetyController
 
     # Setup Links
     p_obj = create_test_object("p_link_adv", None, scene)
@@ -415,7 +420,7 @@ def test_create_sensor_object_lidar(scene, blender_context) -> None:
     assert pytest.approx(sensor_obj.location.z) == 0.5
     props = safe_get_sensor(sensor_obj)
     assert props.is_robot_sensor is True
-    assert props.sensor_type == "LIDAR"
+    assert props.sensor_type == "lidar"
 
 
 def test_create_sensor_object_imu_gps_camera(scene, blender_context) -> None:
@@ -429,13 +434,13 @@ def test_create_sensor_object_imu_gps_camera(scene, blender_context) -> None:
     imu = Sensor(name="imu_sensor", type=SensorType.IMU, link_name="base_link", imu_info=IMUInfo())
     obj_imu = create_sensor_object(blender_context, imu, link_objects)
     assert obj_imu is not None
-    assert safe_get_sensor(obj_imu).sensor_type == "IMU"
+    assert safe_get_sensor(obj_imu).sensor_type == "imu"
 
     # GPS
     gps = Sensor(name="gps_sensor", type=SensorType.GPS, link_name="base_link", gps_info=GPSInfo())
     obj_gps = create_sensor_object(blender_context, gps, link_objects)
     assert obj_gps is not None
-    assert safe_get_sensor(obj_gps).sensor_type == "GPS"
+    assert safe_get_sensor(obj_gps).sensor_type == "gps"
 
     # Camera
     cam = Sensor(
@@ -443,7 +448,7 @@ def test_create_sensor_object_imu_gps_camera(scene, blender_context) -> None:
     )
     obj_cam = create_sensor_object(blender_context, cam, link_objects)
     assert obj_cam is not None
-    assert safe_get_sensor(obj_cam).sensor_type == "CAMERA"
+    assert safe_get_sensor(obj_cam).sensor_type == "camera"
 
 
 def test_import_robot_with_mimic(scene, blender_context) -> None:
@@ -521,23 +526,24 @@ def test_create_joint_object_prismatic(scene, blender_context) -> None:
 
     link_objects = {"p": p_obj, "c": c_obj}
 
+    # Use highly precise normalization to satisfy SYLVESTER_TOLERANCE_EPSILON (1e-9)
     joint = Joint(
         name="prism_j",
         type=JointType.PRISMATIC,
         parent="p",
         child="c",
-        axis=Vector3(0.70710678, 0.70710678, 0.0),  # Correct unit vector
+        axis=Vector3(0.70710678118, 0.70710678118, 0.0),
         limits=JointLimits(lower=0, upper=1.0, effort=10, velocity=1),
     )
 
     obj = create_joint_object(blender_context, joint, link_objects)
     assert obj is not None
     props = safe_get_joint(obj)
-    assert props.joint_type == "PRISMATIC"
+    assert props.joint_type == "prismatic"
     assert props.axis == "CUSTOM"
     # Expect normalized 1/sqrt(2) approx 0.707
-    assert pytest.approx(props.custom_axis_x) == 0.7071067
-    assert pytest.approx(props.custom_axis_y) == 0.7071067
+    assert pytest.approx(props.custom_axis_x) == 0.70710678
+    assert pytest.approx(props.custom_axis_y) == 0.70710678
 
 
 def test_create_joint_object_continuous_floating(scene, blender_context) -> None:
@@ -551,13 +557,13 @@ def test_create_joint_object_continuous_floating(scene, blender_context) -> None
     )
     obj_cont = create_joint_object(blender_context, j_cont, link_objects)
     assert obj_cont is not None
-    assert safe_get_joint(obj_cont).joint_type == "CONTINUOUS"
+    assert safe_get_joint(obj_cont).joint_type == "continuous"
 
     # Floating
     j_float = Joint(name="float_j", type=JointType.FLOATING, parent="p_c", child="c_c")
     obj_float = create_joint_object(blender_context, j_float, link_objects)
     assert obj_float is not None
-    assert safe_get_joint(obj_float).joint_type == "FLOATING"
+    assert safe_get_joint(obj_float).joint_type == "floating"
 
 
 def test_create_link_object_with_mesh_visual(tmp_path, scene, blender_context) -> None:
@@ -665,11 +671,6 @@ def test_create_sensor_with_custom_plugin(scene, blender_context) -> None:
 
 def test_import_robot_with_legacy_transmissions_skipped(scene, blender_context) -> None:
     """Test that legacy transmissions are skipped (no auto-conversion)."""
-    from linkforge_core.models import (
-        Transmission,
-        TransmissionActuator,
-        TransmissionJoint,
-    )
 
     l1 = Link(name="base")
     l2 = Link(name="arm")
@@ -717,7 +718,6 @@ def test_import_robot_with_legacy_transmissions_skipped(scene, blender_context) 
 
 def test_import_robot_skips_transmissions_when_ros2_control_exists(scene, blender_context) -> None:
     """Test that transmissions are skipped when ros2_control is present."""
-    from linkforge_core.models import Transmission, TransmissionJoint
 
     l1 = Link(name="base")
     l2 = Link(name="arm")
@@ -735,8 +735,6 @@ def test_import_robot_skips_transmissions_when_ros2_control_exists(scene, blende
         name="j1", command_interfaces=["position"], state_interfaces=["position"]
     )
     rc = Ros2Control(name="RealRobot", type="system", hardware_plugin="fake_hw", joints=[rc_joint])
-
-    from linkforge_core.models import TransmissionActuator
 
     trans = Transmission(
         name="trans1",
@@ -770,7 +768,6 @@ def test_import_robot_skips_transmissions_when_ros2_control_exists(scene, blende
 
 def test_create_link_with_material(scene, blender_context) -> None:
     """Test link creation with visual material."""
-    from linkforge_core.models import Material
 
     color = Color(r=1.0, g=0.0, b=0.0, a=1.0)
     material = Material(name="RedMat", color=color)
@@ -848,7 +845,7 @@ def test_create_link_with_collision_mesh(tmp_path, scene, blender_context) -> No
     assert obj is not None
     coll_obj = next(c for c in obj.children if "_collision" in c.name)
     assert coll_obj["imported_from_source"] is True
-    assert coll_obj["collision_geometry_type"] == "MESH"
+    assert coll_obj["collision_geometry_type"] == "mesh"
     assert safe_get_linkforge(obj).collision_quality == 100.0
 
 
@@ -858,14 +855,14 @@ def test_create_primitive_mesh_cylinder_sphere(scene, blender_context) -> None:
     cyl = Cylinder(radius=0.5, length=2.0)
     obj_cyl = create_primitive_mesh(blender_context, cyl, "test_cyl")
     assert obj_cyl is not None
-    assert obj_cyl["source_geometry_type"] == "CYLINDER"
+    assert obj_cyl["source_geometry_type"] == "cylinder"
     assert pytest.approx(obj_cyl.dimensions.z) == 2.0
 
     # Sphere
     sphere = Sphere(radius=1.0)
     obj_sphere = create_primitive_mesh(blender_context, sphere, "test_sphere")
     assert obj_sphere is not None
-    assert obj_sphere["source_geometry_type"] == "SPHERE"
+    assert obj_sphere["source_geometry_type"] == "sphere"
     assert pytest.approx(obj_sphere.dimensions.x) == 2.0
 
 
@@ -1005,7 +1002,6 @@ def test_normalize_and_consolidate_imported_objects(scene, blender_context) -> N
 def test_create_joint_object_mimic_logic(scene, blender_context) -> None:
     """Test that mimics are correctly resolved even if created out of order."""
     from linkforge.blender.adapters.core_to_blender import create_joint_object
-    from linkforge_core.models import Joint, JointMimic, JointType
 
     # Parent/Child link shells
     p = create_test_object("p", None, scene)
@@ -1017,8 +1013,6 @@ def test_create_joint_object_mimic_logic(scene, blender_context) -> None:
     link_objects = {"p": p, "c": c}
     # Mocking the discovery of the driver joint in scene
     # The actual implementation looks for objects by name
-
-    from linkforge_core.models import JointLimits
 
     joint = Joint(
         name="follower",
@@ -1051,7 +1045,7 @@ def test_sensor_noise_properties(clean_scene, scene, blender_context) -> None:
 
     # IMU with noise
     imu = Sensor(
-        name="IMU",
+        name="imu",
         type=SensorType.IMU,
         link_name="base_link",
         imu_info=IMUInfo(
@@ -1061,7 +1055,7 @@ def test_sensor_noise_properties(clean_scene, scene, blender_context) -> None:
 
     # GPS with noise
     gps = Sensor(
-        name="GPS",
+        name="gps",
         type=SensorType.GPS,
         link_name="base_link",
         gps_info=GPSInfo(

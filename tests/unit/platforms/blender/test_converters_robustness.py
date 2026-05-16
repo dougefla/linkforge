@@ -10,8 +10,7 @@ from linkforge.blender.adapters.blender_to_core import (
     scene_to_robot,
 )
 from linkforge.blender.adapters.translator import JointTranslator, LinkTranslator
-from linkforge_core.composer import RobotBuilder
-from linkforge_core.exceptions import RobotValidationError, ValidationErrorCode
+from linkforge.core import RobotBuilder, RobotValidationError, ValidationErrorCode
 
 from tests.blender_test_utils import (
     create_test_object,
@@ -74,7 +73,7 @@ class TestJointRobustness:
         props = safe_get_joint(j)
         assert props is not None, "Failed to initialize joint properties on mock object"
         props.is_robot_joint = True
-        props.joint_type = "REVOLUTE"  # Must be REVOLUTE to test axis fallback
+        props.joint_type = "revolute"  # Must be REVOLUTE to test axis fallback
         props.parent_link = p
         props.child_link = c
         props.axis = "CUSTOM"
@@ -97,7 +96,3 @@ class TestJointRobustness:
         assert core is not None, "Joint 'Joint' not found in robot model"
         assert core.axis is not None, "Joint axis was not fell back to default"
         assert core.axis.z == 1.0  # Default fallback
-
-
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])

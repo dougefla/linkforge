@@ -6,14 +6,13 @@ non-origin base links, and multi-visual/collision configurations.
 
 from __future__ import annotations
 
-import pytest
-from linkforge_core.composer.robot_builder import RobotBuilder
-from linkforge_core.models import (
+from linkforge.core import (
     Box,
     Collision,
     Joint,
     JointType,
     Link,
+    RobotBuilder,
     Transform,
     Vector3,
     Visual,
@@ -105,7 +104,3 @@ def test_robot_builder_high_level_api() -> None:
     assert robot.name == "proto"
     assert len(robot.links) == 2
     assert len(robot.joints) == 1
-
-
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])

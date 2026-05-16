@@ -6,9 +6,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from linkforge_core.generators.urdf_generator import URDFGenerator
-from linkforge_core.models.robot import Robot
-from linkforge_core.parsers.urdf_parser import URDFParser
+from linkforge.core import Robot, URDFGenerator, URDFParser
 
 
 def perform_urdf_roundtrip(robot: Robot, pretty_print: bool = True, **kwargs: Any) -> Robot:
@@ -23,7 +21,9 @@ def perform_urdf_roundtrip(robot: Robot, pretty_print: bool = True, **kwargs: An
         The re-imported robot model.
     """
     generator = URDFGenerator(pretty_print=pretty_print, **kwargs)
-    urdf_string = generator.generate(robot)
+    # Default validate to False for roundtrip tests to avoid physics errors on minimal models
+    validate = kwargs.pop("validate", False)
+    urdf_string = generator.generate(robot, validate=validate)
 
     with tempfile.NamedTemporaryFile(mode="w", suffix=".urdf", delete=False) as f:
         temp_path = Path(f.name)

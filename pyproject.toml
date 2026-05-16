@@ -25,9 +25,9 @@ linkforge-blender = { workspace = true }
 
 # Shared Tool Configs
 [tool.pytest.ini_options]
-testpaths = ["tests/unit/core"]
-pythonpath = ["core/src", "platforms/blender"]
-addopts = ["--verbose", "--cov=linkforge_core", "--cov=platforms/blender/linkforge"]
+testpaths = ["tests/unit/core", "tests/unit/platforms/blender"]
+pythonpath = ["core/src", "platforms/blender/src"]
+addopts = ["--verbose", "--cov=linkforge.core", "--cov=linkforge.blender"]
 
 [tool.ruff]
 line-length = 100
@@ -46,14 +46,13 @@ python_version = "3.13"
 strict = true
 warn_return_any = true
 warn_unused_configs = true
-mypy_path = ["core/src", "platforms/blender"]
-exclude = ["platforms/blender/linkforge/linkforge_core"]
+mypy_path = ["core/src", "platforms/blender/src"]
 
 [tool.pyright]
-include = ["core/src", "platforms/blender", "tests"]
-exclude = ["**/mock_bpy_env.py"]
-ignore = ["**/mock_bpy_env.py"]
-extraPaths = ["core/src", "platforms/blender"]
+include = ["core/src", "platforms/blender/src", "tests"]
+exclude = ["**/mock_bpy_env.py", "platforms/blender/src/linkforge/blender/linkforge"]
+ignore = ["**/mock_bpy_env.py", "platforms/blender/src/linkforge/blender/linkforge"]
+extraPaths = ["core/src", "platforms/blender/src"]
 typeCheckingMode = "basic"
 pythonVersion = "3.13"
 
@@ -85,14 +84,6 @@ ignore_errors = false
 disallow_subclassing_any = false
 warn_unused_ignores = true
 
-# Tiered Quality Control: Strict enforcement for production core, optimized for developer velocity in test suites.
-[[tool.mypy.overrides]]
-module = "tests.*"
-check_untyped_defs = false
-disallow_untyped_defs = false
-ignore_missing_imports = true
-ignore_errors = true
-
 [dependency-groups]
 dev = [
     "linkforge-core",
@@ -101,9 +92,9 @@ dev = [
     "pytest>=9.0.3",
     "pytest-cov>=5.0.0",
     "pytest-mock>=3.14.0",
-    "ruff>=0.3.0",
-    "mypy>=1.9.0",
-    "pre-commit>=3.6.0",
+    "ruff>=0.15.13",
+    "mypy>=2.1.0",
+    "pre-commit>=4.6.0",
     "myst-parser>=2.0.0",
     "sphinx>=7.2.6",
     "sphinx-autodoc-typehints>=2.0.0",
