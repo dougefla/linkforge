@@ -170,15 +170,14 @@ def get_robot_statistics(scene: Any, force_refresh: bool = False) -> RobotSceneS
     joint_objects: list[Any] = []
     sensor_objects: list[Any] = []
     transmission_objects: list[Any] = []
+    obj_count = 0
 
     if scene:
         disable_cache = os.environ.get("LINKFORGE_DISABLE_CACHE", "0") == "1"
 
         objects = getattr(scene, "objects", [])
-        try:
+        with contextlib.suppress(TypeError, AttributeError):
             obj_count = len(objects)
-        except (TypeError, AttributeError):
-            obj_count = 0
 
         cache_key = (
             id(scene),
@@ -333,7 +332,7 @@ def get_robot_statistics(scene: Any, force_refresh: bool = False) -> RobotSceneS
     )
 
     # Update cache
-    cache_key = (id(scene), getattr(scene, "frame_current", 0), len(getattr(scene, "objects", [])))
+    cache_key = (id(scene), getattr(scene, "frame_current", 0), obj_count)
     _stats_cache[cache_key] = stats
 
     return stats
@@ -378,7 +377,9 @@ def build_tree_from_stats(
     return tree, root_link, joints, links
 
 
-def move_to_collection(obj: bpy.types.Object, collection: bpy.types.Collection) -> None:
+def move_to_collection(
+    obj: bpy.types.Object | None, collection: bpy.types.Collection | None
+) -> None:
     """Safely move an object to a specific collection.
 
     This unlinks the object from all existing collections and links it to
@@ -403,7 +404,9 @@ def move_to_collection(obj: bpy.types.Object, collection: bpy.types.Collection) 
             collection.objects.link(obj)
 
 
-def sync_object_collections(target_obj: bpy.types.Object, source_obj: bpy.types.Object) -> None:
+def sync_object_collections(
+    target_obj: bpy.types.Object | None, source_obj: bpy.types.Object | None
+) -> None:
     """Synchronize a target object's collection membership with a source object.
 
     This ensures that secondary components (collisions, sensors, etc.) always stay
