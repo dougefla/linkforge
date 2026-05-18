@@ -49,7 +49,16 @@ from ..models.link import Collision, Inertial, InertiaTensor, Link, LinkPhysics,
 from ..models.material import Material
 from ..models.robot import Robot
 from ..models.ros2_control import Ros2ControlJoint
-from ..models.sensor import CameraInfo, ContactInfo, GPSInfo, IMUInfo, LidarInfo, Sensor, SensorType
+from ..models.sensor import (
+    CameraInfo,
+    ContactInfo,
+    ForceTorqueInfo,
+    GPSInfo,
+    IMUInfo,
+    LidarInfo,
+    Sensor,
+    SensorType,
+)
 from ..models.transmission import Transmission
 from ..physics.inertia import calculate_inertia
 
@@ -115,8 +124,43 @@ class LinkBuilder:
         self._control_interfaces: tuple[list[str], list[str], dict[str, Any]] | None = None
         self._control_system_name: str | None = None
         self._committed = False
+        self._in_context = False
 
         self._builder._active_link_builders.append(self)
+
+    def __enter__(self) -> LinkBuilder:
+        """Enter the context of this link.
+
+        Pushes this link's name onto the parent stack, making it the default
+        parent for any links created within this block.
+        """
+        self._in_context = True
+        # Create a skeletal Link so that child links/joints created inside the block
+        # can refer to this link as a valid parent/child in the robot's indices.
+        skeletal_link = Link(name=self._link_name)
+        self._builder.robot.add_link(skeletal_link, overwrite=True)
+
+        self._builder._parent_stack.append(self._link_name)
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: Any,
+    ) -> None:
+        """Exit the context of this link.
+
+        Pops this link's name from the parent stack and automatically commits the
+        link to flush its configured properties if no exception occurred.
+        """
+        if self._builder._parent_stack and self._builder._parent_stack[-1] == self._link_name:
+            self._builder._parent_stack.pop()
+        elif self._link_name in self._builder._parent_stack:
+            self._builder._parent_stack.remove(self._link_name)
+
+        if exc_type is None:
+            self._commit()
 
     def _check_not_committed(self) -> None:
         """Helper to ensure the builder hasn't been committed yet."""
@@ -792,7 +836,6 @@ class LinkBuilder:
             The LinkBuilder instance.
         """
         self._check_not_committed()
-        from linkforge.core.models.sensor import ForceTorqueInfo
 
         sensor = Sensor(
             name=name,
@@ -951,6 +994,15 @@ class LinkBuilder:
     def _finalize_link(self, inertial: Inertial | None) -> None:
         """Create and add the final Link model to the robot."""
         l_state = self._link
+        # Check for duplicates, unless it was a skeletal link registered in context
+        if self._builder.robot.has_link(self._link_name) and not self._in_context:
+            raise RobotValidationError(
+                ValidationErrorCode.DUPLICATE_NAME,
+                f"Duplicate: Link '{self._link_name}'",
+                target="Link",
+                value=self._link_name,
+            )
+
         link = Link(
             name=self._link_name,
             visuals=l_state.visuals,
@@ -958,7 +1010,7 @@ class LinkBuilder:
             inertial=inertial,
             physics=l_state.physics,
         )
-        self._builder.robot.add_link(link)
+        self._builder.robot.add_link(link, overwrite=True)
 
         for sensor in l_state.sensors:
             self._builder.robot.add_sensor(sensor)
