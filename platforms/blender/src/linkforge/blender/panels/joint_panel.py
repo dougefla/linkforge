@@ -118,19 +118,29 @@ class LINKFORGE_PT_joints(Panel):
                 col.prop(props, "limit_velocity")
         # fixed/floating/planar: No limits section (not allowed per robot model spec)
 
-        # Joint State (interactive pose slider within joint limits)
+        # Joint State (interactive pose slider within joint limits).
+        # For revolute/prismatic the slider drives a normalized 0-1 factor so
+        # its visual extent always matches the joint's declared limits — this
+        # keeps small mouse drags inside the joint range even when limits are
+        # tiny (e.g. a 5 cm prismatic range). Continuous joints have no upper
+        # limit, so they keep the raw joint_state slider.
         if props.joint_type in {"revolute", "continuous", "prismatic"}:
             box.separator()
             col = box.column(align=True)
             unit = "rad" if props.joint_type in {"revolute", "continuous"} else "m"
             col.label(text="Joint State:", icon="DRIVER_ROTATIONAL_DIFFERENCE")
-            col.prop(props, "joint_state", text=f"Position ({unit})", slider=True)
             if props.joint_type in {"revolute", "prismatic"}:
+                col.prop(props, "joint_state_factor", text="Position", slider=True)
                 sub = col.row()
                 sub.active = False
                 sub.label(
-                    text=f"Range: [{props.limit_lower:.3f}, {props.limit_upper:.3f}] {unit}"
+                    text=(
+                        f"Value: {props.joint_state:.4f} {unit}  "
+                        f"Range: [{props.limit_lower:.3f}, {props.limit_upper:.3f}] {unit}"
+                    )
                 )
+            else:
+                col.prop(props, "joint_state", text=f"Position ({unit})", slider=True)
 
         # Joint Dynamics settings (optional)
         box.separator()

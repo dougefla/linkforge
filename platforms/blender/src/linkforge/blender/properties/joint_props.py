@@ -115,6 +115,42 @@ def update_joint_state(self: JointPropertyGroup, context: Context) -> None:
     apply_joint_state(self, context)
 
 
+def _limit_span(props: JointPropertyGroup) -> tuple[float, float, float]:
+    """Return ``(lower, upper, span)`` with inverted bounds normalized."""
+    lower = float(props.limit_lower)
+    upper = float(props.limit_upper)
+    if lower > upper:
+        lower, upper = upper, lower
+    return lower, upper, upper - lower
+
+
+def get_joint_state_factor(self: JointPropertyGroup) -> float:
+    """Map the current ``joint_state`` into a [0, 1] factor over the limit range."""
+    lower, _, span = _limit_span(self)
+    if span <= 0.0:
+        return 0.0
+    factor = (float(self.joint_state) - lower) / span
+    if factor < 0.0:
+        return 0.0
+    if factor > 1.0:
+        return 1.0
+    return factor
+
+
+def set_joint_state_factor(self: JointPropertyGroup, value: float) -> None:
+    """Map a [0, 1] factor back to a ``joint_state`` value inside the limits."""
+    lower, upper, span = _limit_span(self)
+    if value < 0.0:
+        value = 0.0
+    elif value > 1.0:
+        value = 1.0
+    new_state = lower if span <= 0.0 else lower + value * span
+    # Write through the ID-property dict to avoid re-entering joint_state's
+    # update callback. The update on joint_state_factor itself fires
+    # apply_joint_state once afterwards.
+    self["joint_state"] = new_state
+
+
 def update_joint_hierarchy(self: JointPropertyGroup, context: Context) -> None:
     """Update Blender object hierarchy when parent/child links change.
 
@@ -335,7 +371,9 @@ class JointPropertyGroup(PropertyGroup):
     # Current joint state (interactive pose within joint limits).
     # Revolute/continuous use radians, prismatic uses meters. Values are
     # clamped to [limit_lower, limit_upper] for revolute/prismatic by the
-    # update callback.
+    # update callback. Continuous joints render this directly as a slider —
+    # for revolute/prismatic the panel drives motion via `joint_state_factor`
+    # so the slider's visual range tracks the joint's actual limits.
     joint_state: FloatProperty(  # type: ignore
         name="Joint State",
         description=(
@@ -347,6 +385,28 @@ class JointPropertyGroup(PropertyGroup):
         soft_min=-2 * PI,
         soft_max=2 * PI,
         precision=4,
+        update=update_joint_state,
+    )
+
+    # Normalized [0, 1] position within the joint's [limit_lower, limit_upper]
+    # range. Used as the slider input for revolute/prismatic so a small mouse
+    # drag maps to a small fraction of the joint range — the previous raw
+    # joint_state slider used a fixed ±2π soft range, which dwarfed typical
+    # prismatic limits (often a few centimetres) and made the slider overshoot
+    # on the slightest drag.
+    joint_state_factor: FloatProperty(  # type: ignore
+        name="Position",
+        description=(
+            "Joint position as a fraction of the limit range (0 = lower limit, "
+            "1 = upper limit). Drag to pose the joint within its declared limits"
+        ),
+        default=0.0,
+        min=0.0,
+        max=1.0,
+        subtype="FACTOR",
+        precision=4,
+        get=get_joint_state_factor,
+        set=set_joint_state_factor,
         update=update_joint_state,
     )
 

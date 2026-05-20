@@ -482,6 +482,62 @@ class TestGlobalPropertiesAndCallbacks:
         update_joint_hierarchy(jp, bpy.context)
         assert joint_obj.parent is None
 
+    def test_joint_state_factor_maps_to_limits(self, scene, blender_context) -> None:
+        """The 0-1 factor must map onto [limit_lower, limit_upper] both ways."""
+        from linkforge.blender.properties.joint_props import (
+            get_joint_state_factor,
+            set_joint_state_factor,
+        )
+
+        base = create_robot_link("base_link", scene)
+        child = create_robot_link("child_link", scene)
+        joint_obj = create_robot_joint("test_joint", base, child, scene)
+        jp = safe_get_joint(joint_obj)
+
+        # Prismatic-style narrow range — the bug case: limit much smaller than
+        # the raw joint_state slider's ±2π soft range.
+        jp.joint_type = "prismatic"
+        jp.limit_lower = -0.05
+        jp.limit_upper = 0.05
+
+        # Factor 0.5 must land exactly in the middle of the range.
+        set_joint_state_factor(jp, 0.5)
+        assert abs(float(jp.joint_state) - 0.0) < 1e-9
+        assert abs(get_joint_state_factor(jp) - 0.5) < 1e-9
+
+        # Bounds map to the limits.
+        set_joint_state_factor(jp, 0.0)
+        assert abs(float(jp.joint_state) - (-0.05)) < 1e-9
+        set_joint_state_factor(jp, 1.0)
+        assert abs(float(jp.joint_state) - 0.05) < 1e-9
+
+        # Out-of-range factor inputs are clamped, not extrapolated.
+        set_joint_state_factor(jp, 2.0)
+        assert abs(float(jp.joint_state) - 0.05) < 1e-9
+        set_joint_state_factor(jp, -0.5)
+        assert abs(float(jp.joint_state) - (-0.05)) < 1e-9
+
+        # Inverted bounds: the helper normalizes lower/upper before mapping.
+        jp.limit_lower = 1.0
+        jp.limit_upper = -1.0
+        set_joint_state_factor(jp, 0.5)
+        assert abs(float(jp.joint_state) - 0.0) < 1e-9
+
+        # Degenerate range collapses to the (sorted) lower limit and factor 0.
+        jp.limit_lower = 0.25
+        jp.limit_upper = 0.25
+        set_joint_state_factor(jp, 0.5)
+        assert abs(float(jp.joint_state) - 0.25) < 1e-9
+        assert get_joint_state_factor(jp) == 0.0
+
+        # Factor getter clamps to [0, 1] when joint_state lies outside limits.
+        jp.limit_lower = -1.0
+        jp.limit_upper = 1.0
+        jp["joint_state"] = 10.0
+        assert get_joint_state_factor(jp) == 1.0
+        jp["joint_state"] = -10.0
+        assert get_joint_state_factor(jp) == 0.0
+
     def test_transmission_properties_and_callbacks(self, scene, blender_context) -> None:
         """Test getters, setters, polls and hierarchy updates in TransmissionPropertyGroup."""
         from linkforge.blender.constants import PROP_TRANSMISSION
