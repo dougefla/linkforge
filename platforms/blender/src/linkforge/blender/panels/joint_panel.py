@@ -116,6 +116,20 @@ class LINKFORGE_PT_joints(Panel):
                 col.prop(props, "limit_velocity")
         # FIXED/FLOATING/PLANAR: No limits section (not allowed per robot model spec)
 
+        # Joint State (interactive pose slider within joint limits)
+        if props.joint_type in {"REVOLUTE", "CONTINUOUS", "PRISMATIC"}:
+            box.separator()
+            col = box.column(align=True)
+            unit = "rad" if props.joint_type in {"REVOLUTE", "CONTINUOUS"} else "m"
+            col.label(text="Joint State:", icon="DRIVER_ROTATIONAL_DIFFERENCE")
+            col.prop(props, "joint_state", text=f"Position ({unit})", slider=True)
+            if props.joint_type in {"REVOLUTE", "PRISMATIC"}:
+                sub = col.row()
+                sub.active = False
+                sub.label(
+                    text=f"Range: [{props.limit_lower:.3f}, {props.limit_upper:.3f}] {unit}"
+                )
+
         # Joint Dynamics settings (optional)
         box.separator()
         box.prop(props, "use_dynamics")

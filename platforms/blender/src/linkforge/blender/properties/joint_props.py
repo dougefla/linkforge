@@ -108,6 +108,13 @@ def set_joint_name(self: JointPropertyGroup, value: str) -> None:
     clear_stats_cache()
 
 
+def update_joint_state(self: JointPropertyGroup, context: Context) -> None:
+    """Push the joint state value onto the child link's local transform."""
+    from ..utils.joint_utils import apply_joint_state
+
+    apply_joint_state(self, context)
+
+
 def update_joint_hierarchy(self: JointPropertyGroup, context: Context) -> None:
     """Update Blender object hierarchy when parent/child links change.
 
@@ -323,6 +330,24 @@ class JointPropertyGroup(PropertyGroup):
         default=DEFAULT_JOINT_VELOCITY,
         min=0.0,
         soft_max=10.0,
+    )
+
+    # Current joint state (interactive pose within joint limits).
+    # Revolute/continuous use radians, prismatic uses meters. Values are
+    # clamped to [limit_lower, limit_upper] for revolute/prismatic by the
+    # update callback.
+    joint_state: FloatProperty(  # type: ignore
+        name="Joint State",
+        description=(
+            "Current joint position. Drag to pose the robot within the joint's "
+            "limits (radians for revolute/continuous joints, meters for "
+            "prismatic joints)"
+        ),
+        default=0.0,
+        soft_min=-2 * PI,
+        soft_max=2 * PI,
+        precision=4,
+        update=update_joint_state,
     )
 
     # Joint dynamics
