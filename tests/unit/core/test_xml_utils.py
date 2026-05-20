@@ -1,9 +1,10 @@
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-from linkforge_core.exceptions import RobotModelError
-from linkforge_core.utils.xml_utils import (
-    MAX_XML_DEPTH,
+import pytest
+from linkforge.core import RobotMathError, RobotModelError, RobotValidationError, Vector3
+from linkforge.core._utils.xml_utils import (
+    create_xml_element,
     parse_float,
     parse_int,
     parse_optional_bool,
@@ -11,7 +12,11 @@ from linkforge_core.utils.xml_utils import (
     parse_vector3,
     serialize_xml,
     validate_xml_depth,
+    xml_add_text,
+    xml_add_vector,
 )
+from linkforge.core.constants import MAX_XML_DEPTH
+from linkforge.core.validation import is_suspicious_location, validate_package_uri
 
 
 def test_parse_float_valid() -> None:
@@ -62,8 +67,6 @@ def test_serialize_xml_with_namespaces() -> None:
     """Test XML serialization with custom namespaces."""
     import xml.etree.ElementTree as ET
 
-    from linkforge_core.utils.xml_utils import serialize_xml
-
     root = ET.Element("robot")
     child = ET.SubElement(root, "link")
     child.set("name", "test")
@@ -75,24 +78,30 @@ def test_serialize_xml_with_namespaces() -> None:
     assert "test" in xml_str
 
 
+def test_serialize_xml_with_namespaces_non_robot() -> None:
+    """Test XML serialization with custom namespaces when root is not robot."""
+    root = ET.Element("gazebo")
+    xml_str = serialize_xml(root, namespaces={"custom": "http://example.com/custom"})
+    assert "<gazebo" in xml_str
+
+
 def test_parsing_fallbacks() -> None:
     """Test fallbacks for invalid numeric and boolean parsing."""
-    import pytest
 
     # Invalid floats
-    with pytest.raises(RobotModelError, match="must be a finite number"):
+    with pytest.raises(RobotModelError, match="Non-finite float value"):
         parse_float("NaN")
-    with pytest.raises(RobotModelError, match="must be a finite number"):
+    with pytest.raises(RobotModelError, match="Non-finite float value"):
         parse_float("inf")
     with pytest.raises(RobotModelError, match="outside reasonable range"):
-        parse_float("1e11")
-    with pytest.raises(RobotModelError, match="must be a finite number"):
+        parse_float("1e19")
+    with pytest.raises(RobotModelError, match="Invalid float format"):
         parse_float("not-a-float")
 
     # Invalid ints
     with pytest.raises(RobotModelError, match="outside reasonable range"):
         parse_int("2000000")
-    with pytest.raises(RobotModelError, match="invalid format"):
+    with pytest.raises(RobotModelError, match="Invalid integer format"):
         parse_int("not-an-int")
 
     # Optional bool
@@ -104,33 +113,36 @@ def test_parsing_fallbacks() -> None:
 
 def test_parse_vector3_errors() -> None:
     """Test parse_vector3 with various errors."""
-    import pytest
 
     with pytest.raises(RobotModelError, match="Expected 3 values"):
         parse_vector3("1 2")
     with pytest.raises(RobotModelError, match="Expected 3 values"):
         parse_vector3("1 2 3 4")
-    with pytest.raises(RobotModelError, match="must be a finite number"):
+    with pytest.raises(RobotModelError, match="Invalid float format"):
         parse_vector3("1 2 a")
 
 
 def test_validate_xml_depth_exceeded() -> None:
     """Test XML depth validation with exceeding depth."""
-    import pytest
+    import sys
 
-    # Create very deep XML
-    root = ET.Element("root")
-    curr = root
-    for _ in range(MAX_XML_DEPTH + 1):
-        curr = ET.SubElement(curr, "a")
+    old_limit = sys.getrecursionlimit()
+    sys.setrecursionlimit(max(old_limit, MAX_XML_DEPTH + 100))
+    try:
+        # Create very deep XML
+        root = ET.Element("root")
+        curr = root
+        for _ in range(MAX_XML_DEPTH + 1):
+            curr = ET.SubElement(curr, "a")
 
-    with pytest.raises(RobotModelError, match="Nesting too deep"):
-        validate_xml_depth(root)
+        with pytest.raises(RobotModelError, match="exceeds limit"):
+            validate_xml_depth(root)
+    finally:
+        sys.setrecursionlimit(old_limit)
 
 
 def test_parsing_missing_attribute() -> None:
     """Test RobotModelError when attribute is missing and no default is provided."""
-    import pytest
 
     with pytest.raises(RobotModelError, match="Missing required attribute"):
         parse_float(None, attribute_name="test_float")
@@ -145,7 +157,6 @@ def test_parsing_missing_attribute() -> None:
 
 def test_validate_package_uri_complex() -> None:
     """Test complex valid package URI."""
-    from linkforge_core.validation.security import validate_package_uri
 
     uri = "package://my_robot/meshes/arm.stl"
     assert validate_package_uri(uri) == uri
@@ -153,7 +164,6 @@ def test_validate_package_uri_complex() -> None:
 
 def test_is_suspicious_location_match() -> None:
     """Test suspicious location detection."""
-    from linkforge_core.validation.security import is_suspicious_location
 
     # On most systems /etc exists and resolves to /private/etc or itself.
     # We use a path that is definitely suspicious.
@@ -162,7 +172,6 @@ def test_is_suspicious_location_match() -> None:
 
 def test_xml_add_text() -> None:
     """Test xml_add_text utility function."""
-    from linkforge_core.utils.xml_utils import xml_add_text
 
     parent = ET.Element("root")
 
@@ -185,8 +194,6 @@ def test_xml_add_text() -> None:
 
 def test_xml_add_vector() -> None:
     """Test xml_add_vector utility function."""
-    from linkforge_core.models import Vector3
-    from linkforge_core.utils.xml_utils import xml_add_vector
 
     parent = ET.Element("root")
     vec = Vector3(1.1234, 2.0, -3.5)
@@ -200,3 +207,27 @@ def test_xml_add_vector() -> None:
     assert elem.tag == "origin"
     assert elem.text == "1.12 2.00 -3.50"
     assert parent.find("origin") is not None
+
+
+def test_create_xml_element_no_formatter() -> None:
+    """Test XML element creation when no specific formatter is provided."""
+
+    parent = ET.Element("p")
+    create_xml_element(parent, "child", a=1, b=True)
+    child = parent.find("child")
+    assert child is not None
+    assert child.get("a") == "1"
+    assert child.get("b") == "True"
+
+
+def test_parse_vector3_exception_fallback() -> None:
+    """Test Vector3 parsing fallback and error handling."""
+
+    # Hit RobotMathError (re-raised)
+    with pytest.raises(RobotMathError):
+        parse_vector3("1.0 2.0 invalid")
+
+    # Hit RobotValidationError via IndexError
+    with pytest.raises(RobotValidationError) as exc:
+        parse_vector3("1.0 2.0")
+    assert "Vector3" in str(exc.value)

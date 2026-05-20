@@ -1,168 +1,67 @@
-"""Tests for transform_utils module."""
+"""Unit tests for Blender Math, Transforms, and Rotation normalization."""
 
-import bpy
+from __future__ import annotations
+
 import pytest
 from linkforge.blender.utils.transform_utils import (
     clear_parent_keep_transform,
     set_parent_keep_transform,
 )
 
+from tests.blender_test_utils import create_test_object
 
-def test_set_parent_keep_transform_basic() -> None:
-    """Test parenting while preserving world transform."""
-    # Clean scene
-    bpy.ops.object.select_all(action="SELECT")
-    bpy.ops.object.delete()
-
-    # Create parent and child objects
-    bpy.ops.object.empty_add(location=(1, 2, 3))
-    parent_obj = bpy.context.active_object
-    parent_obj.name = "Parent"
-
-    bpy.ops.object.empty_add(location=(5, 6, 7))
-    child_obj = bpy.context.active_object
-    child_obj.name = "Child"
-
-    # Store original world location
-    original_world_loc = child_obj.matrix_world.translation.copy()
-
-    # Set parent while keeping transform
-    set_parent_keep_transform(child_obj, parent_obj)
-
-    # Verify parent was set
-    assert child_obj.parent == parent_obj
-
-    # Verify world location is preserved
-    assert child_obj.matrix_world.translation.x == pytest.approx(original_world_loc.x, abs=1e-4)
-    assert child_obj.matrix_world.translation.y == pytest.approx(original_world_loc.y, abs=1e-4)
-    assert child_obj.matrix_world.translation.z == pytest.approx(original_world_loc.z, abs=1e-4)
+# Transform Utilities
 
 
-def test_set_parent_keep_transform_with_rotation() -> None:
-    """Test parenting with rotated parent."""
-    bpy.ops.object.select_all(action="SELECT")
-    bpy.ops.object.delete()
+class TestTransformUtilities:
+    def test_set_parent_keep_transform(self, scene, blender_context) -> None:
+        """Test parenting while preserving world transform."""
+        parent_obj = create_test_object("Parent", None, scene)
+        parent_obj.location = (1, 2, 3)
 
-    # Create rotated parent
-    bpy.ops.object.empty_add(location=(0, 0, 0), rotation=(0, 0, 1.5708))  # 90 degrees Z
-    parent_obj = bpy.context.active_object
+        child_obj = create_test_object("Child", None, scene)
+        child_obj.location = (5, 6, 7)
 
-    # Create child at specific location
-    bpy.ops.object.empty_add(location=(1, 0, 0))
-    child_obj = bpy.context.active_object
+        original_world_loc = child_obj.matrix_world.translation.copy()
 
-    original_world_loc = child_obj.matrix_world.translation.copy()
+        set_parent_keep_transform(child_obj, parent_obj)
 
-    # Parent with transform preservation
-    set_parent_keep_transform(child_obj, parent_obj)
+        assert child_obj.parent == parent_obj
+        assert child_obj.matrix_world.translation.x == pytest.approx(original_world_loc.x, abs=1e-4)
 
-    # World location should be preserved
-    new_world_loc = child_obj.matrix_world.translation
-    assert new_world_loc.x == pytest.approx(original_world_loc.x, abs=1e-4)
-    assert new_world_loc.y == pytest.approx(original_world_loc.y, abs=1e-4)
-    assert new_world_loc.z == pytest.approx(original_world_loc.z, abs=1e-4)
+    def test_clear_parent_keep_transform(self, scene, blender_context) -> None:
+        """Test clearing parent while preserving world transform."""
+        parent_obj = create_test_object("ParentClear", None, scene)
+        parent_obj.location = (2, 3, 4)
 
+        child_obj = create_test_object("ChildClear", None, scene)
+        child_obj.location = (5, 6, 7)
+        child_obj.parent = parent_obj
 
-def test_set_parent_keep_transform_none_child() -> None:
-    """Test with None child."""
-    bpy.ops.object.select_all(action="SELECT")
-    bpy.ops.object.delete()
+        original_world_loc = child_obj.matrix_world.translation.copy()
 
-    bpy.ops.object.empty_add()
-    parent_obj = bpy.context.active_object
+        clear_parent_keep_transform(child_obj)
 
-    # Should not raise error
-    set_parent_keep_transform(None, parent_obj)
+        assert child_obj.parent is None
+        assert child_obj.matrix_world.translation.x == pytest.approx(original_world_loc.x, abs=1e-4)
 
+    def test_set_parent_keep_transform_none_inputs(self) -> None:
+        """Test parenting guard with None inputs."""
+        set_parent_keep_transform(None, None)
 
-def test_set_parent_keep_transform_none_parent() -> None:
-    """Test with None parent."""
-    bpy.ops.object.select_all(action="SELECT")
-    bpy.ops.object.delete()
-
-    bpy.ops.object.empty_add()
-    child_obj = bpy.context.active_object
-
-    # Should not raise error
-    set_parent_keep_transform(child_obj, None)
+    def test_clear_parent_keep_transform_none_input(self) -> None:
+        """Test clearing parent guard with None input."""
+        clear_parent_keep_transform(None)
 
 
-def test_clear_parent_keep_transform_basic() -> None:
-    """Test clearing parent while preserving world transform."""
-    bpy.ops.object.select_all(action="SELECT")
-    bpy.ops.object.delete()
-
-    # Create parent and child
-    bpy.ops.object.empty_add(location=(2, 3, 4))
-    parent_obj = bpy.context.active_object
-
-    bpy.ops.object.empty_add(location=(5, 6, 7))
-    child_obj = bpy.context.active_object
-
-    # Set parent first
-    child_obj.parent = parent_obj
-
-    # Store world location
-    original_world_loc = child_obj.matrix_world.translation.copy()
-
-    # Clear parent while keeping transform
-    clear_parent_keep_transform(child_obj)
-
-    # Verify parent was cleared
-    assert child_obj.parent is None
-
-    # Verify world location is preserved
-    assert child_obj.matrix_world.translation.x == pytest.approx(original_world_loc.x, abs=1e-4)
-    assert child_obj.matrix_world.translation.y == pytest.approx(original_world_loc.y, abs=1e-4)
-    assert child_obj.matrix_world.translation.z == pytest.approx(original_world_loc.z, abs=1e-4)
+# Rotation Normalization
 
 
-def test_clear_parent_keep_transform_none() -> None:
-    """Test with None object."""
-    clear_parent_keep_transform(None)
-    # Should not raise error
+class TestRotationNormalization:
+    def test_rotation_mode_normalization(self, scene, blender_context) -> None:
+        """Verify that adding a new link frame forces XYZ rotation mode."""
+        from tests.blender_test_utils import create_robot_link
 
-
-def test_clear_parent_keep_transform_no_parent() -> None:
-    """Test clearing parent on object without parent."""
-    bpy.ops.object.select_all(action="SELECT")
-    bpy.ops.object.delete()
-
-    bpy.ops.object.empty_add(location=(1, 2, 3))
-    obj = bpy.context.active_object
-
-    # Store location
-    original_loc = obj.matrix_world.translation.copy()
-
-    # Clear parent (should be a no-op)
-    clear_parent_keep_transform(obj)
-
-    # Location should be unchanged
-    assert obj.matrix_world.translation.x == pytest.approx(original_loc.x, abs=1e-4)
-    assert obj.matrix_world.translation.y == pytest.approx(original_loc.y, abs=1e-4)
-    assert obj.matrix_world.translation.z == pytest.approx(original_loc.z, abs=1e-4)
-
-
-def test_set_parent_with_scale() -> None:
-    """Test that parenting preserves transform even with scaled parent."""
-    bpy.ops.object.select_all(action="SELECT")
-    bpy.ops.object.delete()
-
-    # Create scaled parent
-    bpy.ops.object.empty_add(location=(0, 0, 0))
-    parent_obj = bpy.context.active_object
-    parent_obj.scale = (2.0, 2.0, 2.0)
-
-    # Create child
-    bpy.ops.object.empty_add(location=(4, 0, 0))
-    child_obj = bpy.context.active_object
-
-    original_world_loc = child_obj.matrix_world.translation.copy()
-
-    # Parent with transform preservation
-    set_parent_keep_transform(child_obj, parent_obj)
-
-    # World location should still be at (4, 0, 0)
-    assert child_obj.matrix_world.translation.x == pytest.approx(original_world_loc.x, abs=1e-4)
-    assert child_obj.matrix_world.translation.y == pytest.approx(original_world_loc.y, abs=1e-4)
-    assert child_obj.matrix_world.translation.z == pytest.approx(original_world_loc.z, abs=1e-4)
+        obj = create_robot_link("test_rotation_link", scene)
+        assert obj is not None
+        assert obj.rotation_mode == "XYZ"

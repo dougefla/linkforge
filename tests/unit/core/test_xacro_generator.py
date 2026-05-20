@@ -1,20 +1,13 @@
-"""Unit tests for XACRO generator."""
-
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import pytest
-from linkforge_core.base import RobotGeneratorError
-from linkforge_core.generators.xacro_generator import XACRO_NS, XACROGenerator
-from linkforge_core.models import (
+from linkforge.core import (
     Box,
     Collision,
     Color,
     Cylinder,
-    GazeboElement,
-    GazeboPlugin,
     Inertial,
-    InertiaTensor,
     Joint,
     JointCalibration,
     JointDynamics,
@@ -26,1029 +19,842 @@ from linkforge_core.models import (
     Material,
     Mesh,
     Robot,
-    Ros2Control,
-    Ros2ControlJoint,
+    RobotGeneratorError,
     Sphere,
     Transform,
+    Transmission,
+    TransmissionActuator,
+    TransmissionJoint,
     Vector3,
     Visual,
+    XACROGenerator,
 )
+from linkforge.core.generators.xacro_generator import XACRO_URI
 
 
-class TestXACROGenerator:
-    """Test XACRO generator features."""
+class TestXacroGenerator:
+    @pytest.fixture
+    def empty_robot(self):
+        return Robot(name="test_robot")
 
-    def test_generate_basic(self) -> None:
-        """Test basic XACRO generation without advanced features."""
-        robot = Robot(name="basic_xacro")
-        link = Link(name="base_link")
-        robot.add_link(link)
-
-        generator = XACROGenerator(advanced_mode=False)
-        xml_str = generator.generate(robot)
-
-        root = ET.fromstring(xml_str)
-        assert root.tag == "robot"
-        assert root.get("name") == "basic_xacro"
-        # Should not have properties in basic mode
-        assert len(root.findall(f"{XACRO_NS}property")) == 0
-
-    def test_extract_materials(self) -> None:
-        """Test material property extraction."""
-        robot = Robot(name="mat_bot")
-
-        # Two links using identical red material
-        link1 = Link(name="link1")
-        mat = Material(name="BrandRed", color=Color(1, 0, 0, 1))
-        link1.add_visual(Visual(geometry=Box(Vector3(1, 1, 1)), material=mat))
-        robot.add_link(link1)
-
-        link2 = Link(name="link2")
-        link2.add_visual(Visual(geometry=Box(Vector3(1, 1, 1)), material=mat))
-        robot.add_link(link2)
-
-        # Enable extraction
-        generator = XACROGenerator(extract_materials=True, advanced_mode=True, pretty_print=False)
-        xml_str = generator.generate(robot, validate=False)
-        root = ET.fromstring(xml_str)
-
-        # Check property existence
-        props = root.findall(f"{XACRO_NS}property")
-        # Should have 'brandred' property
-        prop = next((p for p in props if p.get("name") == "brandred"), None)
-        assert prop is not None
-        assert prop.get("value") == "1 0 0 1"
-
-        # Check usage in global material definition
-        mat_elem = root.find("material[@name='BrandRed']")
-        assert mat_elem is not None
-        color_elem = mat_elem.find("color")
-        assert color_elem is not None
-        assert color_elem.get("rgba") == "${brandred}"
-
-    def test_extract_dimensions(self) -> None:
-        """Test dimension property extraction."""
-        robot = Robot(name="dim_bot")
-
-        # Provide identical geometries and materials to trigger macro grouping
-        # Cylinders (Wheels)
-        for i in range(4):
-            link = Link(name=f"wheel_{i}")
-            cyl = Cylinder(radius=0.3, length=0.1)
-            link.add_visual(Visual(geometry=cyl))
-            robot.add_link(link)
-
-        # Boxes (Legs)
-        for i in range(2):
-            link = Link(name=f"leg_{i}")
-            box = Box(size=Vector3(0.1, 0.2, 1.0))
-            link.add_visual(Visual(geometry=box))
-            robot.add_link(link)
-
-        generator = XACROGenerator(extract_dimensions=True, advanced_mode=True, pretty_print=False)
-        xml_str = generator.generate(robot, validate=False)
-        root = ET.fromstring(xml_str)
-
-        props = root.findall(f"{XACRO_NS}property")
-
-        # Should extract properties like 'wheel_radius' and 'wheel_length'
-        rad_prop = next(
-            (p for p in props if p.get("name") is not None and "radius" in str(p.get("name"))), None
+    @pytest.fixture
+    def simple_robot(self):
+        robot = Robot(name="simple_robot")
+        # Add basic link and joint to make it a valid robot model
+        link_base = Link(name="base_link", inertial=Inertial(mass=1.0))
+        link_child = Link(name="child_link", inertial=Inertial(mass=1.0))
+        joint = Joint(
+            name="base_to_child",
+            type=JointType.FIXED,
+            parent="base_link",
+            child="child_link",
+            origin=Transform(xyz=Vector3(1, 2, 3), rpy=Vector3(0.1, 0.2, 0.3)),
         )
-        len_prop = next(
-            (p for p in props if p.get("name") is not None and "length" in str(p.get("name"))), None
+        robot.add_link(link_base)
+        robot.add_link(link_child)
+        robot.add_joint(joint)
+        return robot
+
+    def test_generator_instantiation(self):
+        """Test instantiation with various options."""
+        gen1 = XACROGenerator()
+        assert gen1.advanced_mode is True
+        assert gen1.extract_materials is True
+        assert gen1.extract_dimensions is True
+        assert gen1.generate_macros is False
+        assert gen1.split_files is False
+
+        gen2 = XACROGenerator(advanced_mode=False)
+        assert gen2.advanced_mode is False
+        assert gen2.extract_materials is False
+        assert gen2.extract_dimensions is False
+
+        gen3 = XACROGenerator(
+            generate_macros=True,
+            split_files=True,
+            output_path=Path("out.xacro"),
         )
+        assert gen3.generate_macros is True
+        assert gen3.split_files is True
+        assert gen3.output_path == Path("out.xacro")
 
-        assert rad_prop is not None
-        assert len_prop is not None
+    def test_validation_failure(self, empty_robot):
+        """Test that generator raises RobotGeneratorError if robot is invalid."""
+        gen = XACROGenerator()
+        # Empty robot is invalid because it has no links/joints (validation requires at least one link)
+        with pytest.raises(RobotGeneratorError) as exc:
+            gen.generate(empty_robot, validate=True)
+        assert "Robot validation failed" in str(exc.value)
 
-        # Check values
-        assert "0.3" in str(rad_prop.get("value"))
-        assert "0.1" in str(len_prop.get("value"))
-        # Heuristic name check
-        assert "wheel" in str(rad_prop.get("name"))
+    def test_material_extraction(self, simple_robot):
+        """Test extracting material colors as XACRO properties."""
+        mat_red = Material(name="My-Red", color=Color(1.0, 0.0, 0.0, 1.0))
+        mat_blue = Material(name="My-Blue", color=Color(0.0, 0.0, 1.0, 1.0))
+        mat_texture = Material(name="My-Texture", texture="texture.png")
 
-        # Check usage in geometry
-        # Find a cylinder element
-        cyl_elems = root.findall(".//link/visual/geometry/cylinder")
-        assert len(cyl_elems) == 4
-        assert "${" in str(cyl_elems[0].get("radius"))
-        assert "${" in str(cyl_elems[0].get("length"))
+        # Assign materials to visuals
+        visual1 = Visual(name="v1", geometry=Box(size=Vector3(1, 1, 1)), material=mat_red)
+        visual2 = Visual(name="v2", geometry=Box(size=Vector3(1, 1, 1)), material=mat_blue)
+        visual3 = Visual(name="v3", geometry=Box(size=Vector3(1, 1, 1)), material=mat_texture)
 
-        # Check box extraction
-        box_props = [p for p in props if p.get("name") and "leg" in str(p.get("name"))]
-        assert len(box_props) >= 3  # width, depth, height
+        simple_robot.links[0].add_visual(visual1)
+        simple_robot.links[0].add_visual(visual2)
+        simple_robot.links[1].add_visual(visual3)
 
-        box_elems = root.findall(".//link/visual/geometry/box")
-        assert len(box_elems) == 2
-        assert "${" in str(box_elems[0].get("size"))
-
-    def test_generate_macros(self) -> None:
-        """Test macro generation for repeated structures."""
-        robot = Robot(name="macro_bot")
-        base = Link(name="base")
-        robot.add_link(base)
-
-        # Create 2 legs with identical structure
-        # Must match signature: Visuals, Collisions, Inertial
-        inertial = Inertial(
-            mass=1.0, inertia=InertiaTensor(ixx=0.1, iyy=0.1, izz=0.1, ixy=0, ixz=0, iyz=0)
-        )
-
-        for side in ["left", "right"]:
-            leg = Link(name=f"{side}_leg", inertial=inertial)
-            leg.add_visual(Visual(geometry=Box(Vector3(0.1, 0.1, 1.0))))
-            leg.add_collision(Collision(geometry=Box(Vector3(0.1, 0.1, 1.0))))
-            robot.add_link(leg)
-
-            joint = Joint(
-                name=f"{side}_hip",
-                type=JointType.REVOLUTE,
-                parent="base",
-                child=f"{side}_leg",
-                origin=Transform(xyz=Vector3(0, 1 if side == "left" else -1, 0)),
-                axis=Vector3(1, 0, 0),
-                limits=JointLimits(lower=-1.0, upper=1.0, effort=10.0, velocity=1.0),
-            )
-            robot.add_joint(joint)
-
-        generator = XACROGenerator(generate_macros=True, advanced_mode=True, pretty_print=False)
-        xml_str = generator.generate(robot, validate=False)
+        gen = XACROGenerator(extract_materials=True)
+        xml_str = gen.generate(simple_robot)
         root = ET.fromstring(xml_str)
 
-        # Should have a macro definition
-        # The generator adds a comment " Macros " before them
-        macro = root.find(f"{XACRO_NS}macro")
-        assert macro is not None, "Macro definition not found"
+        # Check property elements
+        ns = {"xacro": XACRO_URI}
+        properties = root.findall(".//xacro:property", ns)
 
+        # Verify property names are sanitized and assigned values
+        prop_names = {p.get("name"): p.get("value") for p in properties}
+        assert "my_red" in prop_names
+        assert prop_names["my_red"] == "1 0 0 1"
+        assert "my_blue" in prop_names
+        assert prop_names["my_blue"] == "0 0 1 1"
+        # Texture-only material shouldn't be extracted as property
+        assert "my_texture" not in prop_names
+
+        # Verify global materials reference these properties
+        global_materials = root.findall("./material")
+        assert len(global_materials) == 3
+        mat_dict = {m.get("name"): m for m in global_materials}
+        assert "My-Red" in mat_dict
+        rgba_color = mat_dict["My-Red"].find("color").get("rgba")
+        assert rgba_color == "${my_red}"
+
+        # Verify standard URDF fallback when material extraction is disabled
+        gen_std = XACROGenerator(extract_materials=False)
+        xml_std = gen_std.generate(simple_robot)
+        root_std = ET.fromstring(xml_std)
+        mat_dict_std = {m.get("name"): m for m in root_std.findall("./material")}
+        assert mat_dict_std["My-Red"].find("color").get("rgba") == "1 0 0 1"
+
+    def test_dimensions_extraction(self, simple_robot):
+        """Test extracting common dimensions as properties."""
+        # 1. Box dimensions
+        visual1 = Visual(geometry=Box(size=Vector3(0.5, 0.2, 0.8)))
+        visual2 = Visual(geometry=Box(size=Vector3(0.5, 0.2, 0.8)))
+
+        # 2. Cylinder dimensions
+        visual3 = Visual(geometry=Cylinder(radius=0.05, length=0.2))
+        visual4 = Visual(geometry=Cylinder(radius=0.05, length=0.2))
+
+        # 3. Sphere dimensions
+        visual5 = Visual(geometry=Sphere(radius=0.03))
+        visual6 = Visual(geometry=Sphere(radius=0.03))
+
+        # Add prefix name matching triggers (wheel, leg, ball)
+        link1 = Link(name="left_wheel", inertial=Inertial(mass=1.0))
+        link2 = Link(name="right_wheel", inertial=Inertial(mass=1.0))
+        link1.add_visual(visual3)
+        link2.add_visual(visual4)
+
+        link3 = Link(name="left_leg", inertial=Inertial(mass=1.0))
+        link4 = Link(name="right_leg", inertial=Inertial(mass=1.0))
+        link3.add_visual(visual1)
+        link4.add_visual(visual2)
+
+        link5 = Link(name="ball_a", inertial=Inertial(mass=1.0))
+        link6 = Link(name="ball_b", inertial=Inertial(mass=1.0))
+        link5.add_visual(visual5)
+        link6.add_visual(visual6)
+
+        simple_robot.add_link(link1)
+        simple_robot.add_link(link2)
+        simple_robot.add_link(link3)
+        simple_robot.add_link(link4)
+        simple_robot.add_link(link5)
+        simple_robot.add_link(link6)
+
+        gen = XACROGenerator(extract_dimensions=True)
+        xml_str = gen.generate(simple_robot, validate=False)
+        root = ET.fromstring(xml_str)
+
+        ns = {"xacro": XACRO_URI}
+        properties = root.findall(".//xacro:property", ns)
+        prop_names = {p.get("name"): p.get("value") for p in properties}
+
+        # Cylinder radius & length suffix/prefix logic
+        assert "wheel_radius" in prop_names
+        assert prop_names["wheel_radius"] == "0.05"
+        assert "wheel_length" in prop_names
+        assert prop_names["wheel_length"] == "0.2"
+
+        # Box height, width, depth
+        assert "leg_width" in prop_names
+        assert prop_names["leg_width"] == "0.5"
+        assert "leg_depth" in prop_names
+        assert prop_names["leg_depth"] == "0.2"
+        assert "leg_height" in prop_names
+        assert prop_names["leg_height"] == "0.8"
+
+        # Sphere radius
+        assert "ball_radius" in prop_names
+        assert prop_names["ball_radius"] == "0.03"
+
+    def test_dimensions_extraction_no_common_prefix(self, simple_robot):
+        """Test fallback dimension property naming when there is no common prefix."""
+        visual1 = Visual(geometry=Cylinder(radius=0.15, length=0.45))
+        visual2 = Visual(geometry=Cylinder(radius=0.15, length=0.45))
+
+        # Use non-matching link names
+        link1 = Link(name="apple", inertial=Inertial(mass=1.0))
+        link2 = Link(name="banana", inertial=Inertial(mass=1.0))
+        link1.add_visual(visual1)
+        link2.add_visual(visual2)
+
+        simple_robot.add_link(link1)
+        simple_robot.add_link(link2)
+
+        gen = XACROGenerator(extract_dimensions=True)
+        xml_str = gen.generate(simple_robot, validate=False)
+        root = ET.fromstring(xml_str)
+
+        ns = {"xacro": XACRO_URI}
+        properties = root.findall(".//xacro:property", ns)
+        prop_names = {p.get("name"): p.get("value") for p in properties}
+
+        # Falls back to cylinder_radius/cylinder_length
+        assert "cylinder_radius" in prop_names
+        assert prop_names["cylinder_radius"] == "0.15"
+        assert "cylinder_length" in prop_names
+        assert prop_names["cylinder_length"] == "0.45"
+
+    def test_macro_generation_identical_patterns(self, simple_robot):
+        """Test auto-macro generation when links and joints have identical structures."""
+        # Define identical links with visual and collision details
+        geom = Cylinder(radius=0.1, length=0.5)
+        visual = Visual(
+            name="v", geometry=geom, material=Material(name="Blue", color=Color(0, 0, 1, 1))
+        )
+
+        link_fl = Link(name="fl_wheel", inertial=Inertial(mass=1.0))
+        link_fl.add_visual(visual)
+
+        link_fr = Link(name="fr_wheel", inertial=Inertial(mass=1.0))
+        link_fr.add_visual(visual)
+
+        # Define identical joints
+        joint_fl = Joint(
+            name="fl_wheel_joint",
+            type=JointType.REVOLUTE,
+            parent="base_link",
+            child="fl_wheel",
+            axis=Vector3(0, 0, 1),
+            limits=JointLimits(lower=-3.14, upper=3.14, effort=10.0, velocity=5.0),
+            dynamics=JointDynamics(damping=0.1, friction=0.05),
+            mimic=JointMimic(joint="other_joint", multiplier=1.0, offset=0.0),
+            safety_controller=JointSafetyController(
+                soft_lower_limit=-3.0, soft_upper_limit=3.0, k_position=1.0, k_velocity=2.0
+            ),
+            calibration=JointCalibration(rising=0.1, falling=0.2),
+            origin=Transform(xyz=Vector3(0.5, 0.5, 0), rpy=Vector3(0, 0, 0)),
+        )
+
+        joint_fr = Joint(
+            name="fr_wheel_joint",
+            type=JointType.REVOLUTE,
+            parent="base_link",
+            child="fr_wheel",
+            axis=Vector3(0, 0, 1),
+            limits=JointLimits(lower=-3.14, upper=3.14, effort=10.0, velocity=5.0),
+            dynamics=JointDynamics(damping=0.1, friction=0.05),
+            mimic=JointMimic(joint="other_joint", multiplier=1.0, offset=0.0),
+            safety_controller=JointSafetyController(
+                soft_lower_limit=-3.0, soft_upper_limit=3.0, k_position=1.0, k_velocity=2.0
+            ),
+            calibration=JointCalibration(rising=0.1, falling=0.2),
+            origin=Transform(xyz=Vector3(0.5, -0.5, 0), rpy=Vector3(0, 0, 0)),
+        )
+
+        simple_robot.add_link(link_fl)
+        simple_robot.add_link(link_fr)
+        simple_robot.add_joint(joint_fl)
+        simple_robot.add_joint(joint_fr)
+
+        gen = XACROGenerator(generate_macros=True)
+        xml_str = gen.generate(simple_robot, validate=False)
+        root = ET.fromstring(xml_str)
+
+        ns = {"xacro": XACRO_URI}
+
+        # Verify macro definition was generated
+        macros = root.findall(".//xacro:macro", ns)
+        assert len(macros) == 1
+        macro = macros[0]
+        assert macro.get("name").startswith("cylinder_")
+        assert macro.get("params") == "name parent xyz rpy"
+
+        # Verify macro calls (fl_wheel and fr_wheel)
         macro_name = macro.get("name")
-        params = str(macro.get("params"))
-        assert "name parent xyz rpy" in params
-
-        # Should have 2 calls to this macro
-        calls = root.findall(f"{XACRO_NS}{macro_name}")
+        calls = root.findall(f".//xacro:{macro_name}", ns)
         assert len(calls) == 2
 
-        # Verify call parameters
-        left_call = next((c for c in calls if c.get("name") == "left_leg"), None)
-        assert left_call is not None
-        assert left_call.get("parent") == "base"
-        assert "0 1 0" in str(left_call.get("xyz"))
-        # format_vector uses {:g} usually or similar, let's just check containing substrings if specific format unknown
-        # Actually checking implementation of format_vector... it uses format_float which uses {:g}
-        # default logic.
-
-    def test_split_files_logic(self, tmp_path: Path) -> None:
-        """Test splitting output into multiple files."""
-        robot = Robot(name="split_bot")
-        link = Link(name="base")
-        robot.add_link(link)
-
-        # Add property candidate (material)
-        mat = Material(name="red", color=Color(1, 0, 0, 1))
-        link.add_visual(Visual(geometry=Box(Vector3(1, 1, 1)), material=mat))
-
-        out_file = tmp_path / "robot.xacro"
-
-        # Enable splitting
-        generator = XACROGenerator(split_files=True, advanced_mode=True, extract_materials=True)
-        generator.write(robot, out_file, validate=False)
-
-        # Files that should exist
-        main_file = out_file
-        props_file = tmp_path / "split_bot_properties.xacro"
-        # Macros file might not exist if no macros generated
-
-        assert main_file.exists()
-        assert props_file.exists()
-
-        main_content = main_file.read_text()
-        props_content = props_file.read_text()
-
-        # Main file should include properties
-        assert "xacro:include" in main_content
-        assert 'filename="split_bot_properties.xacro"' in main_content
-
-        # Properties file should contain the property
-        assert '<xacro:property name="red"' in props_content
-
-    def test_find_common_prefix_empty(self) -> None:
-        """Test _find_common_prefix with empty or single names."""
-        gen = XACROGenerator()
-        assert gen._find_common_prefix([]) == ""
-        assert gen._find_common_prefix(["l1"]) == "l1"
-        assert gen._find_common_prefix(["part_a", "part_b"]) == "part"
-
-    def test_generator_validation_error(self) -> None:
-        """Test that XACROGenerator.generate raises RobotModelError for invalid robot."""
-        robot = Robot(name="invalid")
-        l1 = Link(name="l1")
-        robot.add_link(l1)
-        # Manually append to bypass add_joint validation
-        lim = JointLimits(lower=-1, upper=1, effort=1, velocity=1)
-        joint = Joint(
-            name="j1",
-            type=JointType.REVOLUTE,
-            parent="world",
-            child="l1",
-            axis=Vector3(1.0, 0.0, 0.0),
-            limits=lim,
-        )
-        robot._joints.append(joint)
-
-        gen = XACROGenerator()
-
-        # Generator's validation should catch missing 'world' link
-        with pytest.raises(RobotGeneratorError, match="Robot validation failed"):
-            gen.generate(robot, validate=True)
-
-    def test_generator_dimension_extraction_variations(self) -> None:
-        """Test dimension extraction with no common prefix and different types."""
-        robot = Robot(name="r")
-        root_link = Link(name="base_link")
-        robot.add_link(root_link)
-
-        # Repeated spheres - tests sphere branch
-        l1 = Link(name="s1", initial_visuals=[Visual(geometry=Sphere(radius=0.1))])
-        l2 = Link(name="s2", initial_visuals=[Visual(geometry=Sphere(radius=0.1))])
-
-        # Repeated boxes with no common prefix
-        l3 = Link(name="alpha", initial_visuals=[Visual(geometry=Box(size=Vector3(2, 2, 2)))])
-        l4 = Link(name="omega", initial_visuals=[Visual(geometry=Box(size=Vector3(2, 2, 2)))])
-
-        robot.add_link(l1)
-        robot.add_link(l2)
-        robot.add_link(l3)
-        robot.add_link(l4)
-
-        # Add joints to keep them in the tree
-        robot.add_joint(Joint(name="j1", type=JointType.FIXED, parent="base_link", child="s1"))
-        robot.add_joint(Joint(name="j2", type=JointType.FIXED, parent="base_link", child="s2"))
-        robot.add_joint(Joint(name="j3", type=JointType.FIXED, parent="base_link", child="alpha"))
-        robot.add_joint(Joint(name="j4", type=JointType.FIXED, parent="base_link", child="omega"))
-
-        gen = XACROGenerator(advanced_mode=True, extract_dimensions=True)
-        xml_str = gen.generate(robot)
-
-        assert 'name="s_radius"' in xml_str  # Prefix "s" from s1, s2
-        assert 'name="box_width"' in xml_str  # no common prefix for alpha, omega
-        assert 'value="2"' in xml_str
-
-    def test_generator_material_no_prop(self) -> None:
-        """Test material color generation when properties are disabled."""
-        robot = Robot(name="r")
-        robot.add_link(Link(name="l"))
-        mat = Material(name="m", color=Color(0.1, 0.2, 0.3, 1.0))
-        robot.links[0].add_visual(Visual(geometry=Box(size=Vector3(1, 1, 1)), material=mat))
-
-        # advanced_mode=True but extract_materials=False
-        gen = XACROGenerator(advanced_mode=True, extract_materials=False)
-        xml = gen.generate(robot)
-        assert 'rgba="0.1 0.2 0.3 1"' in xml
-        assert "<color" in xml  # Should be inside the material tag
-
-    def test_generator_macro_signatures(self) -> None:
-        """Test all geometry types in macro signatures (Cylinder, Sphere, Mesh) and generation."""
-        robot = Robot(name="r")
-        root = Link(name="base")
-        robot.add_link(root)
-
-        def add_pair(geom: Box | Cylinder | Sphere | Mesh) -> None:
-            l1 = Link(name=f"{geom.type.value}1", initial_visuals=[Visual(geometry=geom)])
-            l2 = Link(name=f"{geom.type.value}2", initial_visuals=[Visual(geometry=geom)])
-            robot.add_link(l1)
-            robot.add_link(l2)
-            robot.add_joint(
-                Joint(name=f"j_{l1.name}", type=JointType.FIXED, parent="base", child=l1.name)
-            )
-            robot.add_joint(
-                Joint(name=f"j_{l2.name}", type=JointType.FIXED, parent="base", child=l2.name)
-            )
-
-            # Add identical collision to both to maintain identical signature
-            for lnk in [l1, l2]:
-                lnk.add_collision(Collision(name="collision", geometry=geom))
-
-        add_pair(Cylinder(radius=0.1, length=1.0))
-        add_pair(Sphere(radius=0.5))
-        add_pair(Mesh(resource="test.stl", scale=Vector3(2, 2, 2)))
-        add_pair(Box(size=Vector3(1, 2, 3)))
-
-        gen = XACROGenerator(advanced_mode=True, generate_macros=True, extract_dimensions=True)
-        xml_str = gen.generate(robot)
-
-        assert "cylinder_" in xml_str
-        assert "sphere_" in xml_str
-        assert "mesh_" in xml_str
-        assert "box_" in xml_str
-        assert 'filename="test.stl"' in xml_str
-        assert "radius=" in xml_str
-        # Check that the value 0.5 exists (either as property or literal)
-        assert "0.5" in xml_str
-
-    def test_generator_material_property_fallback(self) -> None:
-        """Test material color fallback in generate_robot_element."""
-        robot = Robot(name="r")
-        robot.add_link(Link(name="l"))
-        mat = Material(name="m", color=Color(0.1, 0.2, 0.3, 1.0))
-        robot.links[0].add_visual(Visual(geometry=Box(size=Vector3(1, 1, 1)), material=mat))
-
-        gen = XACROGenerator(advanced_mode=True, extract_materials=True)
-        # Manually sabotage material_properties to trigger the elif
-        gen.material_properties = {}
-
-        # Override _extract_materials to do nothing
-        gen._extract_materials = lambda r, p: None  # type: ignore[method-assign, assignment]
-
-        xml_str = gen.generate(robot)
-        assert 'rgba="0.1 0.2 0.3 1"' in xml_str
-
-    def test_generator_split_files_minimal(self, tmp_path: Path) -> None:
-        """Test split files with only properties or only macros to hit all branches."""
-        robot = Robot(name="r")
-        robot.add_link(Link(name="base"))
-
-        # 1. Properties only
-        gen = XACROGenerator(split_files=True, extract_dimensions=True, generate_macros=False)
-        # Add repeated geometry to force property
-        robot.links[0].add_visual(Visual(geometry=Box(size=Vector3(1, 1, 1))))
-        l2 = Link(name="l2", initial_visuals=[Visual(geometry=Box(size=Vector3(1, 1, 1)))])
-        robot.add_link(l2)
-        robot.add_joint(Joint(name="j", type=JointType.FIXED, parent="base", child="l2"))
-
-        gen.write(robot, tmp_path / "robot.xacro")
-        assert (tmp_path / "r_properties.xacro").exists()
-        assert not (tmp_path / "r_macros.xacro").exists()
-
-    def test_generator_mesh_relative_path(self, tmp_path: Path) -> None:
-        """Test mesh relative path resolution in XACROGenerator."""
-        robot = Robot(name="r")
-        mesh_path = tmp_path / "meshes" / "link.stl"
-        mesh_path.parent.mkdir(parents=True)
-        mesh_path.write_text("dummy")
-
-        link = Link(name="l", initial_visuals=[Visual(geometry=Mesh(resource=str(mesh_path)))])
-        robot.add_link(link)
-
-        gen = XACROGenerator(advanced_mode=True, urdf_path=tmp_path / "urdf" / "robot.xacro")
-        xml_str = gen.generate(robot)
-        # Relaxed check for relative path
-        assert "meshes/link.stl" in xml_str.replace("\\", "/")
-
-    def test_generator_texture_and_no_color(self) -> None:
-        """Test material with texture and material without color."""
-        robot = Robot(name="r")
-        l1 = Link(name="l1")
-        # Material with texture only
-        mat_tex = Material(name="tex", texture="checkers.png")
-        l1.add_visual(Visual(geometry=Box(size=Vector3(1, 1, 1)), material=mat_tex))
-
-        # Material with no name, but HAS texture (to pass validation)
-        mat_empty = Material(name="", texture="empty.png")
-        l1.add_visual(Visual(geometry=Sphere(radius=0.1), material=mat_empty))
-
-        robot.add_link(l1)
-
-        gen = XACROGenerator(extract_materials=True)
-        xml_str = gen.generate(robot)
-        assert 'filename="checkers.png"' in xml_str
-
-    def test_generator_material_no_color(self) -> None:
-        """Test material color generation with NO color to hit continue branch."""
-        robot = Robot(name="r")
-        l1 = Link(name="l")
-        mat = Material(name="no_color", texture="dummy.png")  # No color assigned, but has texture
-        l1.add_visual(Visual(geometry=Box(size=Vector3(1, 1, 1)), material=mat))
-        robot.add_link(l1)
-
-        gen = XACROGenerator(extract_materials=True)
-        xml_str = gen.generate(robot)
-        # no_color material should NOT be in material_properties
-        assert "no_color" in xml_str  # Should exist by name in reference
-        assert "rgba=" not in xml_str.lower()  # No color tag generated for this mat
-
-    def test_generator_macro_with_dynamics_and_mesh(self) -> None:
-        """Test macro generation for links with dynamics and meshes."""
-        robot = Robot(name="r")
-        robot.add_link(Link(name="base"))
-        mat = Material(name="m", color=Color(1, 0, 0, 1))
-
-        def create_link(name: str, parent: str) -> Link:
-            link = Link(name=name)
-            link.add_visual(Visual(geometry=Mesh(resource="mesh.dae"), material=mat))
-            robot.add_link(link)
-            from linkforge_core.models.joint import JointLimits
-
-            lim = JointLimits(lower=-1.0, upper=1.0, effort=10.0, velocity=1.0)
-            joint = Joint(
-                name=f"{name}_j",
-                type=JointType.REVOLUTE,
-                parent=parent,
-                child=name,
-                axis=Vector3(1.0, 0.0, 0.0),
-                limits=lim,
-                dynamics=JointDynamics(damping=0.5, friction=0.1),
-            )
-            robot.add_joint(joint)
-            return link
-
-        create_link("l1", "base")
-        create_link("l2", "base")  # identical to l1
-
-        gen = XACROGenerator(advanced_mode=True, generate_macros=True)
-        xml_str = gen.generate(robot)
-
-        assert 'damping="0.5"' in xml_str
-        assert 'friction="0.1"' in xml_str
-        assert 'mesh filename="mesh.dae"' in xml_str
-
-    def test_find_common_prefix_edge_cases(self) -> None:
-        """Test common prefix finder with edge cases."""
-        gen = XACROGenerator()
-
-        # Empty list
-        assert gen._find_common_prefix([]) == ""
-
-        # Single item (should return empty string as per logic?)
-        # Logic says: if not names return "", else prefix = names[0]...
-        # Wait, if list has 1 item, loop [1:] doesn't run, returns item.
-        # But _generate_dimension_property_name passes only if len >= 2.
-        # So we test logic directly for safety.
-        assert gen._find_common_prefix(["single"]) == "single"
-
-        # No common prefix
-        assert gen._find_common_prefix(["a_b", "c_d"]) == ""
-
-        # Partial match
-        assert gen._find_common_prefix(["arm_left", "arm_right"]) == "arm"
-
-    def test_group_dimensions_tolerance(self) -> None:
-        """Test dimension grouping tolerance."""
-        gen = XACROGenerator()
-
-        # Values close enough to group
-        values = [("l1", 1.0001), ("l2", 1.0002)]
-        groups = gen._group_dimensions_by_value(values)
-        assert len(groups) == 1
-        assert 1.0 in groups  # grouped by rounded key
-
-        # Values too far apart
-        values = [("l1", 1.0), ("l2", 1.1)]
-        groups = gen._group_dimensions_by_value(values)
-        assert len(groups) == 2
-
-    def test_generator_generate_macro_definition_no_joint(self) -> None:
-        """Cover edge case."""
-        gen = XACROGenerator()
-        root = ET.Element("robot")
-        # Template list with link but None joint
-        link = Link(name="l")
-        group = [(link, None)]
-        # Should return early and not crash
-        gen._generate_macro_definition(root, "sig", group)  # type: ignore[arg-type]
-        assert len(root) == 0
-
-    def test_generator_generate_macro_call_no_joint(self) -> None:
-        """Cover edge case."""
-        gen = XACROGenerator()
-        root = ET.Element("robot")
-        link = Link(name="l")
-        # Should return early
-        gen._generate_macro_call(root, "sig", link, None)
-        assert len(root) == 0
-
-    def test_generator_visual_name(self) -> None:
-        """Test visual name generation."""
-        gen = XACROGenerator()
-        robot = Robot(name="test")
-        link = Link(name="l")
-        vis = Visual(geometry=Box(size=Vector3(1.0, 1.0, 1.0)), name="my_visual")
-        link.add_visual(vis)
-        robot.add_link(link)
-
-        xml = gen.generate(robot)
-        assert 'visual name="my_visual"' in xml
-
-    def test_generator_write_no_split(self, tmp_path: Path) -> None:
-        """Test write functionality without file splitting."""
-        gen = XACROGenerator(split_files=False)
-        robot = Robot(name="test")
-        robot.add_link(Link(name="base"))
-        out = tmp_path / "out.xacro"
-        gen.write(robot, out)
-        assert out.exists()
-
-    def test_generator_split_files_with_macros(self, tmp_path: Path) -> None:
-        """Test file splitting with macros."""
-        gen = XACROGenerator(split_files=True, generate_macros=True)
-        # Create robot with repeated geometry to trigger macros
-        robot = Robot(name="test")
-
-        # Base link
-        base = Link(name="base")
-        robot.add_link(base)
-
-        # Link 1
-        l1 = Link(name="l1")
-        v1 = Visual(geometry=Box(size=Vector3(1.0, 1.0, 1.0)))  # Identical box
-        l1.add_visual(v1)
-        robot.add_link(l1)
-
-        # Link 2
-        l2 = Link(name="l2")
-        v2 = Visual(geometry=Box(size=Vector3(1.0, 1.0, 1.0)))  # Identical box
-        l2.add_visual(v2)
-        robot.add_link(l2)
-
-        # Joints needed for macro grouping
-        j1 = Joint(name="j1", type=JointType.FIXED, parent="base", child="l1")
-        robot.add_joint(j1)
-        j2 = Joint(name="j2", type=JointType.FIXED, parent="base", child="l2")
-        robot.add_joint(j2)
-
-        out = tmp_path / "main.xacro"
-        gen.write(robot, out)
-
-        assert out.exists()
-        macros_file = tmp_path / "test_macros.xacro"
-        macros_content = macros_file.read_text()
-        assert 'macro name="box_' in macros_content
-        assert '_macro"' in macros_content
-        assert 'include filename="test_macros.xacro"' in out.read_text()
-
-    def test_generator_extract_material_property_implementation(self) -> None:
-        """Test material property extraction implementation."""
-        gen = XACROGenerator(extract_materials=True, advanced_mode=True)
-        # Manually populate material_properties to simulate extraction having happened
-        gen.material_properties["blue"] = "color_blue"
-
-        root = ET.Element("link")
-        mat = Material(name="blue", color=Color(0.0, 0.0, 1.0, 1.0))
-
-        gen._add_material_element(root, mat)
-
-        xml = ET.tostring(root).decode()
-        assert 'rgba="${color_blue}"' in xml
-
-    def test_find_common_prefix_internal_logic(self) -> None:
-        """Test internal logic of _find_common_prefix."""
-        gen = XACROGenerator()
-        # Test basic cases
-        assert gen._find_common_prefix(["arm_link", "arm_joint"]) == "arm"
-        assert gen._find_common_prefix(["fl_wheel", "fr_wheel"]) == "wheel"
-
-    def test_generator_split_files_with_ros2_control(self, tmp_path: Path) -> None:
-        """Test split files with ros2_control configuration."""
-        robot = Robot(name="control_bot")
-        robot.add_link(Link(name="base_link"))
-
-        # Add ros2_control
-        control = Ros2Control(
-            name="GazeboSimSystem", type="system", hardware_plugin="gz_ros2_control/GazeboSimSystem"
-        )
-        control.joints.append(
-            Ros2ControlJoint(
-                name="joint1", command_interfaces=["position"], state_interfaces=["position"]
+        call_names = {c.get("name"): c for c in calls}
+        assert "fl_wheel" in call_names
+        assert call_names["fl_wheel"].get("parent") == "base_link"
+        assert call_names["fl_wheel"].get("xyz") == "0.5 0.5 0"
+
+        assert "fr_wheel" in call_names
+        assert call_names["fr_wheel"].get("parent") == "base_link"
+        assert call_names["fr_wheel"].get("xyz") == "0.5 -0.5 0"
+
+    def test_mesh_geometry_scale_and_path(self, simple_robot):
+        """Test mesh geometry export path, scaling, and output directory."""
+        visual = Visual(
+            geometry=Mesh(
+                resource="package://my_pack/meshes/base.dae",
+                scale=Vector3(2.0, 3.0, 4.0),
             )
         )
-        robot.add_ros2_control(control)
+        simple_robot.links[0].add_visual(visual)
 
-        # Add gazebo plugin
-        plugin = GazeboPlugin(name="gz_ros2_control", filename="libgz_ros2_control-system.so")
-        robot.add_gazebo_element(GazeboElement(plugins=[plugin]))
-
-        out_file = tmp_path / "robot.xacro"
-
-        # Enable splitting
-        gen = XACROGenerator(split_files=True, advanced_mode=True)
-        gen.write(robot, out_file, validate=False)
-
-        # Files that should exist
-        main_file = out_file
-        control_file = tmp_path / "control_bot_ros2_control.xacro"
-
-        assert main_file.exists()
-        assert control_file.exists()
-
-        main_content = main_file.read_text()
-        control_content = control_file.read_text()
-
-        # Main file should include ros2_control
-        assert "xacro:include" in main_content
-        assert 'filename="control_bot_ros2_control.xacro"' in main_content
-
-        # Main file should NOT contain the empty placeholder comments at the bottom
-        # It should ONLY have the single comment above the include tag
-        assert main_content.count("<!-- ROS2 Control -->") == 1
-        assert "<!-- Gazebo -->" not in main_content
-
-        # Control file should contain ros2_control and gazebo tags
-        assert "<ros2_control" in control_content
-        assert "<gazebo" in control_content
-        assert "gz_ros2_control" in control_content
-
-
-class TestXACROGeneratorEdgeCoverage:
-    """Test generator behavior for macro groups, geometry types, joint limits, and file splitting."""
-
-    def test_link_in_macro_with_no_matching_group_falls_through(self) -> None:
-        """Verify link handles fallthrough when no matching macro group is found."""
-        gen = XACROGenerator(generate_macros=True)
-        robot = Robot(name="r")
-        link = Link(name="l1", initial_visuals=[Visual(geometry=Box(size=Vector3(x=1, y=1, z=1)))])
-        robot.add_link(link)
-        gen.links_in_macros = {"l1"}
-        gen.macro_groups = {}
-        result = gen.generate(robot)
-        assert "l1" in result
-
-    def test_generator_unsupported_geometry_fallback(self) -> None:
-        """Test that XACROGenerator handles unsupported geometry types via fallback."""
-        gen = XACROGenerator()
-        robot = Robot(name="r")
-
-        class UnknownGeometry:
-            pass
-
-        link = Link(name="l1", initial_visuals=[Visual(geometry=UnknownGeometry())])  # type: ignore
-        robot.add_link(link)
-        xml = gen.generate(robot)
-        # It should generate an empty geometry container `<geometry />` or `<geometry></geometry>`
-        assert "<geometry />" in xml or "<geometry></geometry>" in xml
-
-    def test_visual_with_non_standard_geometry_in_signature(self) -> None:
-        """Verify signature generation handles non-standard geometry objects."""
-        gen = XACROGenerator(generate_macros=True)
-        robot = Robot(name="r")
-        link = Link(name="l1", initial_visuals=[Visual(geometry=Sphere(radius=0.5))])
-        robot.add_link(link)
-        result = gen.generate(robot)
-        assert "l1" in result
-
-    def test_joint_limit_with_none_lower(self) -> None:
-        """Verify joint limit generation handles cases where lower limit is not specified."""
-        gen = XACROGenerator()
-        robot = Robot(name="r")
-        robot.add_link(Link(name="l1"))
-        robot.add_link(Link(name="l2"))
-        joint = Joint(
-            name="j",
-            type=JointType.REVOLUTE,
-            parent="l1",
-            child="l2",
-            axis=Vector3(1.0, 0.0, 0.0),
-            limits=JointLimits(effort=1.0, velocity=1.0, lower=None, upper=None),
-        )
-        robot.add_joint(joint)
-        result = gen.generate(robot)
-        assert "j" in result
-
-    def test_joint_dynamics_with_zero_values_skips_attributes(self) -> None:
-        """Verify joint dynamics with zero values do not generate redundant XML attributes."""
-        gen = XACROGenerator()
-        robot = Robot(name="r")
-        robot.add_link(Link(name="l1"))
-        robot.add_link(Link(name="l2"))
-        joint = Joint(
-            name="j",
-            type=JointType.REVOLUTE,
-            parent="l1",
-            child="l2",
-            axis=Vector3(1.0, 0.0, 0.0),
-            limits=JointLimits(effort=1.0, velocity=1.0),
-            dynamics=JointDynamics(damping=0.0, friction=0.0),
-        )
-        robot.add_joint(joint)
-        result = gen.generate(robot)
-        assert "j" in result
-
-    def test_split_files_with_macros_and_properties(self) -> None:
-        """Split-files mode creates separate property and macro xacro files."""
-        import tempfile
-
-        gen = XACROGenerator(generate_macros=True, split_files=True, advanced_mode=True)
-        robot = Robot(name="r")
-        robot.add_link(
-            Link(
-                name="l1",
-                initial_visuals=[
-                    Visual(
-                        geometry=Box(size=Vector3(x=1, y=1, z=1)),
-                        material=Material(name="m", color=Color(r=1, g=0, b=0)),
-                    )
-                ],
-            )
-        )
-        robot.add_link(Link(name="l2"))
-        joint = Joint(
-            name="j",
-            type=JointType.REVOLUTE,
-            parent="l1",
-            child="l2",
-            axis=Vector3(1.0, 0.0, 0.0),
-            limits=JointLimits(effort=1.0, velocity=1.0),
-        )
-        robot.add_joint(joint)
-        with tempfile.TemporaryDirectory() as td:
-            out = Path(td) / "r.xacro"
-            gen.write(robot, out)
-            assert out.exists()
-
-    def test_generate_macros_with_enhanced_joint(self) -> None:
-        """Test macro generation with mimic, safety_controller, and calibration."""
-        robot = Robot(name="enhanced_macro_bot")
-        base = Link(name="base")
-        robot.add_link(base)
-
-        # Template for repeated link structure
-        for side in ["left", "right"]:
-            link = Link(name=f"{side}_link")
-            link.add_visual(Visual(geometry=Box(Vector3(0.1, 0.1, 0.1))))
-            robot.add_link(link)
-
-            joint = Joint(
-                name=f"{side}_joint",
-                type=JointType.REVOLUTE,
-                parent="base",
-                child=f"{side}_link",
-                axis=Vector3(0, 0, 1),
-                limits=JointLimits(lower=-1.0, upper=1.0, effort=10.0, velocity=1.0),
-                mimic=JointMimic(joint="master_joint", multiplier=1.0, offset=0.1),
-                safety_controller=JointSafetyController(
-                    soft_lower_limit=-0.9,
-                    soft_upper_limit=0.9,
-                    k_position=100.0,
-                    k_velocity=40.0,
-                ),
-                calibration=JointCalibration(rising=0.5, falling=None),
-            )
-            robot.add_joint(joint)
-
-        # Also add the master joint so mimic is valid
-        master_link = Link(name="master_link")
-        robot.add_link(master_link)
-        master_joint = Joint(
-            name="master_joint",
-            type=JointType.REVOLUTE,
-            parent="base",
-            child="master_link",
-            axis=Vector3(0, 0, 1),
-            limits=JointLimits(lower=-1.0, upper=1.0, effort=10.0, velocity=1.0),
-        )
-        robot.add_joint(master_joint)
-
-        generator = XACROGenerator(generate_macros=True, advanced_mode=True, pretty_print=False)
-        xml_str = generator.generate(robot, validate=False)
+        gen = XACROGenerator(output_path=Path("/tmp/robot.xacro"))
+        xml_str = gen.generate(simple_robot, validate=False)
         root = ET.fromstring(xml_str)
 
-        # Find the macro definition
-        macro = root.find(f"{XACRO_NS}macro")
-        assert macro is not None
+        mesh_elem = root.find(".//mesh")
+        assert mesh_elem is not None
+        assert mesh_elem.get("filename") == "package://my_pack/meshes/base.dae"
+        assert mesh_elem.get("scale") == "2 3 4"
 
-        joint_elem = macro.find("joint")
-        assert joint_elem is not None
+    def test_split_files_generation(self, simple_robot, tmp_path):
+        """Test modular split files writing options."""
+        # Set up properties and macros triggers
+        mat = Material(name="Custom-Red", color=Color(1.0, 0, 0, 1.0))
+        visual = Visual(geometry=Cylinder(radius=0.1, length=0.5), material=mat)
 
-        # Check Mimic
-        mimic_elem = joint_elem.find("mimic")
-        assert mimic_elem is not None
-        assert mimic_elem.get("joint") == "master_joint"
-        assert mimic_elem.get("offset") == "0.1"
+        link_fl = Link(name="fl_wheel", inertial=Inertial(mass=1.0))
+        link_fl.add_visual(visual)
 
-        # Check Safety Controller
-        safety_elem = joint_elem.find("safety_controller")
-        assert safety_elem is not None
-        assert safety_elem.get("soft_lower_limit") == "-0.9"
-        assert safety_elem.get("k_position") == "100"
+        link_fr = Link(name="fr_wheel", inertial=Inertial(mass=1.0))
+        link_fr.add_visual(visual)
 
-        # Check Calibration
-        calib_elem = joint_elem.find("calibration")
-        assert calib_elem is not None
-        assert calib_elem.get("rising") == "0.5"
-        assert calib_elem.get("falling") is None
+        joint_fl = Joint(
+            name="fl_wheel_joint",
+            type=JointType.REVOLUTE,
+            parent="base_link",
+            child="fl_wheel",
+            axis=Vector3(0, 0, 1),
+            limits=JointLimits(lower=-3.14, upper=3.14, effort=10.0, velocity=5.0),
+            origin=Transform(xyz=Vector3(0.5, 0.5, 0)),
+        )
+        joint_fr = Joint(
+            name="fr_wheel_joint",
+            type=JointType.REVOLUTE,
+            parent="base_link",
+            child="fr_wheel",
+            axis=Vector3(0, 0, 1),
+            limits=JointLimits(lower=-3.14, upper=3.14, effort=10.0, velocity=5.0),
+            origin=Transform(xyz=Vector3(0.5, -0.5, 0)),
+        )
 
-    def test_generate_with_partial_configuration_and_prefix_matching(self) -> None:
-        """Verify generator handles partial configurations and prefix matching logic."""
-        robot = Robot(name="r")
+        simple_robot.add_link(link_fl)
+        simple_robot.add_link(link_fr)
+        simple_robot.add_joint(joint_fl)
+        simple_robot.add_joint(joint_fr)
+
+        # Transmission/ROS2 Control triggers
+        trans = Transmission(
+            name="trans_fl",
+            type="TransmissionType",
+            joints=(TransmissionJoint(name="fl_wheel_joint", hardware_interfaces=["position"]),),
+            actuators=(TransmissionActuator(name="act_fl", hardware_interfaces=["position"]),),
+        )
+        simple_robot.add_transmission(trans)
+
+        main_file = tmp_path / "my_robot.xacro"
+
+        gen = XACROGenerator(
+            generate_macros=True,
+            split_files=True,
+            extract_materials=True,
+            extract_dimensions=True,
+            use_ros2_control=True,
+        )
+        gen.write(simple_robot, main_file, validate=False)
+
+        # Confirm all separate modular xacro files are created
+        prop_file = tmp_path / "simple_robot_properties.xacro"
+        mac_file = tmp_path / "simple_robot_macros.xacro"
+        ctrl_file = tmp_path / "simple_robot_ros2_control.xacro"
+
+        assert main_file.exists()
+        assert prop_file.exists()
+        assert mac_file.exists()
+        assert ctrl_file.exists()
+
+        # Check main file contains the includes
+        main_xml = ET.fromstring(main_file.read_text())
+        ns = {"xacro": XACRO_URI}
+        includes = main_xml.findall("xacro:include", ns)
+        include_filenames = {inc.get("filename") for inc in includes}
+
+        assert "simple_robot_properties.xacro" in include_filenames
+        assert "simple_robot_macros.xacro" in include_filenames
+        assert "simple_robot_ros2_control.xacro" in include_filenames
+
+        # Verify property file contains extracted material
+        prop_xml = ET.fromstring(prop_file.read_text())
+        props = prop_xml.findall("xacro:property", ns)
+        prop_names = [p.get("name") for p in props]
+        assert "custom_red" in prop_names
+
+        # Verify macros file contains macro definition
+        mac_xml = ET.fromstring(mac_file.read_text())
+        macros = mac_xml.findall("xacro:macro", ns)
+        assert len(macros) == 1
+        assert macros[0].get("name").startswith("cylinder_")
+
+        # Verify control file contains transmission
+        ctrl_xml = ET.fromstring(ctrl_file.read_text())
+        assert ctrl_xml.find("ros2_control") is not None
+
+    def test_write_single_file(self, simple_robot, tmp_path):
+        """Test write method saves robot description to a single XACRO file."""
+        generator = XACROGenerator(split_files=False)
+        filepath = tmp_path / "robot.xacro"
+        generator.write(simple_robot, filepath, validate=False)
+        assert filepath.exists()
+        content = filepath.read_text()
+        assert "robot" in content
+        assert "simple_robot" in content
+
+    def test_split_files_generation_empty(self, empty_robot, tmp_path):
+        """Test split file generation on a robot with no properties, macros, or control elements."""
+        # Add basic link so it has at least some content
+        empty_robot.add_link(Link(name="base_link"))
+        generator = XACROGenerator(
+            split_files=True,
+            extract_materials=False,
+            extract_dimensions=False,
+            generate_macros=False,
+        )
+        main_filepath = tmp_path / "empty_robot.xacro"
+        generator.write(empty_robot, main_filepath, validate=False)
+
+        assert main_filepath.exists()
+        # Ensure no auxiliary files were written
+        assert not (tmp_path / "empty_robot_properties.xacro").exists()
+        assert not (tmp_path / "empty_robot_macros.xacro").exists()
+        assert not (tmp_path / "empty_robot_ros2_control.xacro").exists()
+
+    def test_macro_signature_exhaustive(self):
+        """Test _get_macro_signature covers all geometry, origin, and joint types."""
+        from linkforge.core import Collision
+
+        generator = XACROGenerator()
+
+        # 1. No visuals returns None
+        link_no_vis = Link(name="l")
+        joint = Joint(name="j", type=JointType.FIXED, parent="p", child="c")
+        assert generator._get_macro_signature(link_no_vis, joint) is None
+
+        # 2. Exhaustive visuals and collisions
         link = Link(name="l")
-        # Origin but no material (partial visual configuration)
-        link.add_visual(Visual(geometry=Box(Vector3(1, 1, 1)), origin=Transform()))
-        robot.add_link(link)
 
-        # advanced_mode=True but extracts=False (partial extraction configuration)
-        gen = XACROGenerator(advanced_mode=True, extract_dimensions=False, extract_materials=False)
-        xml = gen.generate(robot)
-        assert "<robot" in xml
-
-        # generate_macros=True but no macros possible (empty robot)
-        robot2 = Robot(name="empty")
-        gen2 = XACROGenerator(generate_macros=True)
-        # Add a placeholder link to pass base model validation
-        robot2.add_link(Link(name="placeholder"))
-        xml2 = gen2.generate(robot2)
-        assert "<robot" in xml2
-
-    def test_find_common_prefix_character_fallback(self) -> None:
-        """Verify the prefix finder handles cases with no clear underscore separator."""
-        gen = XACROGenerator()
-        # _find_common_prefix with mismatching lengths and partial matches
-        # 1. Underscore suffix match (most common)
-        assert gen._find_common_prefix(["fl_wheel", "fr_wheel"]) == "wheel"
-        # 2. Fallback to character prefix (no common underscore suffix)
-        assert gen._find_common_prefix(["link1", "link2"]) == "link"
-        assert gen._find_common_prefix(["a", "abc"]) == "a"
-        assert gen._find_common_prefix(["abc", "a"]) == "a"
-        assert gen._find_common_prefix(["abc", "abx"]) == "ab"
-        assert gen._find_common_prefix(["", "a"]) == ""
-
-    def test_generate_robot_with_empty_name_and_missing_joint_axis(self) -> None:
-        """Verify generator handles robots with empty names and joints missing axes."""
-        robot = Robot(name="robot")
-        # Bypass validation to test generator's empty name branch
-        object.__setattr__(robot, "name", "")
-        # Parent link must exist
-        robot.add_link(Link(name="base"))
-        robot.add_link(Link(name="l1"))
-        robot.add_joint(Joint(name="j1", type=JointType.FIXED, parent="base", child="l1"))
-        gen = XACROGenerator()
-        xml = gen.generate(robot, validate=False)
-        assert 'name=""' in xml
-
-    def test_generate_macros_with_varying_joints(self) -> None:
-        """Verify links are not grouped into macros if their joints have different properties."""
-        robot = Robot(name="r")
-        geom = Box(Vector3(1, 1, 1))
-        # Topological order: add PARENT first
-        robot.add_link(Link(name="base"))
-        robot.add_link(Link(name="l1", initial_visuals=[Visual(geometry=geom)]))
-        robot.add_link(Link(name="l2", initial_visuals=[Visual(geometry=geom)]))
-
-        # Different joint types should prevent grouping
-        robot.add_joint(
-            Joint(
-                name="j1",
-                type=JointType.CONTINUOUS,
-                parent="base",
-                child="l1",
-                axis=Vector3(1, 0, 0),
-            )
+        # Visual sphere
+        vis_sphere = Visual(
+            geometry=Sphere(radius=1.5),
+            origin=Transform(xyz=Vector3(1, 2, 3), rpy=Vector3(0.1, 0.2, 0.3)),
         )
-        robot.add_joint(Joint(name="j2", type=JointType.FIXED, parent="base", child="l2"))
+        link.add_visual(vis_sphere)
 
-        gen = XACROGenerator(generate_macros=True)
-        xml = gen.generate(robot, validate=False)
-        assert "xacro:macro" not in xml
+        # Visual cylinder
+        vis_cyl = Visual(geometry=Cylinder(radius=0.5, length=2.0))
+        link.add_visual(vis_cyl)
 
-    def test_generate_macros_with_advanced_features_disabled(self) -> None:
-        """Verify macro generation still functions when advanced mode features are disabled."""
-        robot = Robot(name="r")
-        geom = Box(Vector3(1, 1, 1))
+        # Visual mesh with material
+        vis_mesh = Visual(
+            geometry=Mesh(resource="package://test/mesh.stl"),
+            material=Material(name="custom_blue", color=Color(0, 0, 1, 1)),
+        )
+        link.add_visual(vis_mesh)
 
-        # Topological order: add PARENT first
-        robot.add_link(Link(name="base"))
-        mat = Material(name="red", color=Color(1, 0, 0, 1))
-        robot.add_link(Link(name="l1", initial_visuals=[Visual(geometry=geom, material=mat)]))
-        robot.add_link(Link(name="l2", initial_visuals=[Visual(geometry=geom, material=mat)]))
-        robot.add_link(Link(name="l3", initial_visuals=[Visual(geometry=geom, material=mat)]))
+        # Collision box
+        coll_box = Collision(
+            geometry=Box(size=Vector3(1, 2, 3)),
+            origin=Transform(xyz=Vector3(4, 5, 6), rpy=Vector3(0.4, 0.5, 0.6)),
+        )
+        link.add_collision(coll_box)
 
-        # Group 1 (l1, l2)
-        robot.add_joint(Joint(name="j1", type=JointType.FIXED, parent="base", child="l1"))
-        robot.add_joint(Joint(name="j2", type=JointType.FIXED, parent="base", child="l2"))
-        # Different joint type for l3
-        robot.add_joint(
-            Joint(
-                name="j3",
-                type=JointType.CONTINUOUS,
-                parent="base",
-                child="l3",
-                axis=Vector3(1, 0, 0),
-            )
+        # Collision sphere
+        coll_sphere = Collision(geometry=Sphere(radius=2.5))
+        link.add_collision(coll_sphere)
+
+        # Collision cylinder
+        coll_cyl = Collision(geometry=Cylinder(radius=1.2, length=3.4))
+        link.add_collision(coll_cyl)
+
+        # Collision mesh
+        coll_mesh = Collision(geometry=Mesh(resource="package://test/col_mesh.dae"))
+        link.add_collision(coll_mesh)
+
+        # Joint details
+        joint_full = Joint(
+            name="j",
+            type=JointType.REVOLUTE,
+            parent="p",
+            child="c",
+            axis=Vector3(1, 0, 0),
+            limits=JointLimits(effort=10.0, velocity=5.0, lower=-1.0, upper=1.0),
+            dynamics=JointDynamics(damping=0.5, friction=0.2),
         )
 
-        # Trigger macro in basic mode
-        gen = XACROGenerator(generate_macros=True, advanced_mode=False)
-        xml = gen.generate(robot, validate=False)
-        assert "xacro:macro" in xml
+        signature = generator._get_macro_signature(link, joint_full)
+        assert signature is not None
+        assert "v_sphere" in signature
+        assert "v_cylinder" in signature
+        assert "v_mesh" in signature
+        assert "custom_blue" in signature
+        assert "c_box" in signature
+        assert "c_sphere" in signature
+        assert "c_cylinder" in signature
+        assert "c_mesh" in signature
+        assert "a_1.000_0.000_0.000" in signature
+        assert "l_10.000_5.000" in signature
 
-    def test_xacro_generator_split_and_limit_edge_cases(self) -> None:
-        """Verify XACRO generator handles split files and joint limit edge cases."""
-        import tempfile
-        from pathlib import Path
+    def test_macro_definition_and_call_edge_cases(self):
+        """Test _generate_macro_definition and _generate_macro_call with None joint returns None."""
+        generator = XACROGenerator()
+        parent = ET.Element("robot")
+        link = Link(name="l")
 
-        # 1. use_ros2_control = False (disable control generation)
-        robot = Robot(name="r")
-        robot.add_link(Link(name="l"))
-        gen = XACROGenerator(use_ros2_control=False)
-        assert "<ros2_control" not in gen.generate(robot)
+        # None joint returns early
+        assert generator._generate_macro_definition(parent, "sig", [(link, None)]) is None
+        assert generator._generate_macro_call(parent, "sig", link, None) is None
 
-        # 2. Split files with empty gazebo tag (verify filtering logic)
-        robot2 = Robot(name="r2")
-        robot2.add_link(Link(name="base"))
-        # Gazebo element with no plugins
-        robot2.add_gazebo_element(GazeboElement(reference="base"))
-        gen2 = XACROGenerator(split_files=True, advanced_mode=True)
+    def test_add_geometry_element_fallback_and_mesh_unit_scale(self):
+        """Test fallback geometry parsing and mesh geometry with default unit scale."""
+        generator = XACROGenerator()
+        parent = ET.Element("geometry")
 
-        with tempfile.TemporaryDirectory() as tmpdir:
-            file_path = Path(tmpdir) / "robot.xacro"
-            gen2.write(robot2, file_path)
-            # Verify the main file contains the gazebo tag (it wasn't moved to control)
-            content = file_path.read_text()
-            assert "<gazebo" in content
+        # Test unregistered geometry fallback
+        generator._add_geometry_element(object(), parent)
+        assert len(parent) == 1
+        assert parent[0].tag == "geometry"
+        assert len(parent[0]) == 0
 
-        # 3. Joint limit variations (lower=None, upper=None) and geometry signatures
-        robot3 = Robot(name="r3")
-        robot3.add_link(Link(name="base"))
-        # Cylinder and Sphere visuals AND collisions
-        vis_c = Visual(geometry=Cylinder(radius=0.1, length=0.2))
-        vis_s = Visual(geometry=Sphere(radius=0.3))
-        col_c = Collision(geometry=Cylinder(radius=0.1, length=0.2))
-        col_s = Collision(geometry=Sphere(radius=0.3))
+        # Test mesh with 1.0 scale (default)
+        mesh_geom = Mesh(resource="package://test/mesh.stl", scale=Vector3(1.0, 1.0, 1.0))
+        generator._add_geometry_element(mesh_geom, parent)
+        mesh_elem = parent.find(".//mesh")
+        assert mesh_elem is not None
+        assert "scale" not in mesh_elem.attrib
 
-        robot3.add_link(Link(name="l_cyl1", initial_visuals=[vis_c], initial_collisions=[col_c]))
-        robot3.add_link(Link(name="l_cyl2", initial_visuals=[vis_c], initial_collisions=[col_c]))
-        robot3.add_link(Link(name="l_sph1", initial_visuals=[vis_s], initial_collisions=[col_s]))
-        robot3.add_link(Link(name="l_sph2", initial_visuals=[vis_s], initial_collisions=[col_s]))
+    def test_get_common_base_name_empty(self):
+        """Test _find_common_prefix returns empty string with empty names list."""
+        generator = XACROGenerator()
+        assert generator._find_common_prefix([]) == ""
 
-        # Test both upper=None and lower=None in grouping
-        lim_upper_none = JointLimits(effort=1.0, velocity=1.0, lower=-1.0, upper=None)
-        lim_lower_none = JointLimits(effort=1.0, velocity=1.0, lower=None, upper=1.0)
+    def test_generator_flags(self, empty_robot):
+        """Test generator with custom flags disabled."""
+        generator = XACROGenerator(
+            extract_materials=False,
+            extract_dimensions=False,
+            generate_macros=False,
+        )
+        xml = generator.generate(empty_robot, validate=False)
+        assert xml is not None
 
-        for i in [1, 2]:
-            robot3.add_joint(
-                Joint(
-                    name=f"j_cyl{i}",
-                    type=JointType.REVOLUTE,
-                    parent="base",
-                    child=f"l_cyl{i}",
-                    limits=lim_upper_none,
-                    axis=Vector3(1, 0, 0),
-                )
-            )
-            robot3.add_joint(
-                Joint(
-                    name=f"j_sph{i}",
-                    type=JointType.CONTINUOUS,
-                    parent="base",
-                    child=f"l_sph{i}",
-                    limits=lim_lower_none,
-                    axis=Vector3(1, 0, 0),
-                )
-            )
-
-        gen3 = XACROGenerator(generate_macros=True)
-        xml3 = gen3.generate(robot3)
-        assert "xacro:macro" in xml3
-
-    def test_xacro_generator_macro_with_mesh_and_disconnected_link(self) -> None:
-        """Test macro signatures with meshes and links without joints."""
+    def test_global_material_without_property(self):
+        """Test global material generation with color but not in properties."""
+        generator = XACROGenerator(extract_materials=False)
         robot = Robot(name="test")
-        link = Link(
-            name="mesh_link",
-            initial_visuals=[Visual(geometry=Mesh(resource="cube.stl"), origin=Transform())],
-            initial_collisions=[Collision(geometry=Mesh(resource="cube.stl"))],
-        )
-        robot.add_link(link)
+        test_link = Link(name="l")
+        mat = Material(name="red", color=Color(1, 0, 0, 1))
+        test_link.add_visual(Visual(geometry=Box(size=Vector3(1, 1, 1)), material=mat))
+        robot.add_link(test_link)
 
-        gen = XACROGenerator()
-        gen._current_robot = robot
-        gen.links_in_macros = {"mesh_link"}
-        gen.macro_groups = {}  # Missing initialization for unit test
-
+        # Run macro signatures check with material in global dict
+        generator.global_materials = generator._collect_materials(robot)
         root = ET.Element("robot")
-        # Verify that links marked for macros but lacking associated joints are correctly ignored
-        gen._add_link_to_xml(root, link)
-        assert len(list(root)) == 0
+        generator._add_material_element(root, mat)
 
-        # Verify that links with joints but without a defined macro group are also ignored by the generator
-        robot.add_link(Link(name="a"))
-        joint = Joint(name="j", parent="a", child="mesh_link", type=JointType.FIXED)
+        mat_elem = root.find("material")
+        assert mat_elem is not None
+        assert mat_elem.get("name") == "red"
+        color_elem = mat_elem.find("color")
+        assert color_elem is not None
+        assert color_elem.get("rgba") == "1 0 0 1"
+
+    def test_macro_generation_safety_checks_dynamic(self):
+        """Test safety guards in _add_link_to_xml when joint is dynamically modified/deleted."""
+        generator = XACROGenerator(generate_macros=True)
+        robot = Robot(name="test")
+        l1 = Link(name="l1")
+        l1.add_visual(Visual(geometry=Sphere(radius=1.0)))
+        l2 = Link(name="l2")
+        l2.add_visual(Visual(geometry=Sphere(radius=1.0)))
+        robot.add_link(l1)
+        robot.add_link(l2)
+
+        joint = Joint(name="j", type=JointType.FIXED, parent="l1", child="l2")
         robot.add_joint(joint)
-        gen._add_link_to_xml(root, link)
-        assert len(list(root)) == 0
 
-        # Signature with mesh and origin
-        sig = gen._get_macro_signature(link, joint)
-        assert "cube.stl" in sig
-        assert "p_0.000_0.000_0.000" in sig
+        # First generate works and identifies macros
+        generator.macro_groups = generator._identify_macro_groups(robot)
+        generator.links_in_macros = set()
+        for group in generator.macro_groups.values():
+            for link, _ in group:
+                generator.links_in_macros.add(link.name)
 
+        generator._current_robot = robot
 
-def test_xacro_macro_signature_robustness() -> None:
-    """Verify macro signature generation handles meshes without explicit origin elements."""
-    from linkforge_core.generators.xacro_generator import XACROGenerator
-    from linkforge_core.models.geometry import Mesh
-    from linkforge_core.models.link import Link, Visual
-    from linkforge_core.models.robot import Robot
+        # Dynamically clear joints to trigger 'if not joint' in _add_link_to_xml
+        robot.joints = ()
+        parent = ET.Element("robot")
+        generator._add_link_to_xml(parent, l2)
+        # Should fall back to standard Link Generation
+        assert parent.find("link") is not None
+        assert parent.find("link").get("name") == "l2"
 
-    robot = Robot(name="r")
-    l1 = Link(name="l1")
-    l1.add_visual(Visual(geometry=Mesh(resource="m.stl")))
-    robot.add_link(l1)
-    # Dummy link for parent reference
-    robot.add_link(Link(name="base"))
-    joint = Joint(name="j1", type=JointType.FIXED, parent="base", child="l1")
+    def test_xacro_generator_box_visual_and_inline_material(self):
+        """Test Box visual inside macro signature and inline materials export."""
+        generator = XACROGenerator()
+        generator.global_materials = {}  # Ensure material is not global
+        generator.links_in_macros = set()
+        robot = Robot(name="test")
+        generator._current_robot = robot
 
-    gen = XACROGenerator(generate_macros=True)
-    # Provide the valid dummy joint
-    sig = gen._get_macro_signature(l1, joint)
-    assert "v_" in sig  # prefix for visual
-    assert "m.stl" in sig
-    assert "j_fixed" in sig
+        # 1. Box visual inside _get_macro_signature
+        link = Link(name="l1")
+        link.add_visual(Visual(geometry=Box(size=Vector3(1, 2, 3))))
+        joint = Joint(name="j1", type=JointType.FIXED, parent="p", child="l1")
+        sig = generator._get_macro_signature(link, joint)
+        assert sig is not None
+        assert "v_box" in sig
+        assert "1.000_2.000_3.000" in sig
+
+        # 2. Inline material is serialized inline rather than referenced
+        link.add_visual(
+            Visual(
+                geometry=Sphere(radius=1.0),
+                material=Material(name="inline_color", color=Color(0.5, 0.5, 0.5, 1.0)),
+            )
+        )
+        parent = ET.Element("robot")
+        generator._add_link_to_xml(parent, link)
+        link_elem = parent.find("link")
+        assert link_elem is not None
+        visual_elem = link_elem.findall("visual")[1]
+        mat_elem = visual_elem.find("material")
+        assert mat_elem is not None
+        assert mat_elem.get("name") == "inline_color"
+        assert mat_elem.find("color") is not None
+
+    def test_xacro_generator_use_ros2_control_false(self, tmp_path):
+        """Test split write with use_ros2_control=False."""
+        generator = XACROGenerator(use_ros2_control=False)
+        robot = Robot(name="simple_robot")
+        robot.add_link(Link(name="base"))
+
+        main_filepath = tmp_path / "simple_robot.xacro"
+        generator.write(robot, main_filepath, validate=False)
+        assert main_filepath.exists()
+        assert not (tmp_path / "simple_robot_ros2_control.xacro").exists()
+
+    def test_xacro_generator_link_in_macro_no_joint_edge_cases(self):
+        """Test macro generation edge cases for orphan links in macros."""
+        generator = XACROGenerator(generate_macros=True)
+        robot = Robot(name="test")
+        l1 = Link(name="l1")
+        robot.add_link(l1)
+
+        # Artificially populate links_in_macros for an orphan link
+        generator.links_in_macros = {"l1"}
+        generator._current_robot = robot
+        parent = ET.Element("robot")
+        generator._add_link_to_xml(parent, l1)
+        # Should generate standard link as fallback since parent/child joint is missing
+        assert parent.find("link") is not None
+
+    def test_xacro_generator_unique_dimensions(self):
+        """Test that single/unique link dimension is not grouped in macro signature checks."""
+        from linkforge.core.generators.xacro_generator import XACRO_URI
+
+        generator = XACROGenerator(extract_dimensions=True)
+        robot = Robot(name="test")
+
+        # Link 1 has unique dimensions, Link 2 has different unique dimensions
+        l1 = Link(name="l1")
+        l1.add_visual(Visual(geometry=Box(size=Vector3(1.11, 2.22, 3.33))))
+        l2 = Link(name="l2")
+        l2.add_visual(Visual(geometry=Box(size=Vector3(4.44, 5.55, 6.66))))
+        robot.add_link(l1)
+        robot.add_link(l2)
+
+        parent = generator.generate_robot_element(robot, validate=False)
+        # Verify that unique properties were not extracted (they only extract for 2+ instances)
+        properties = parent.findall(f"{{{XACRO_URI}}}property")
+        assert not any("1.11" in str(p.get("value")) for p in properties)
+
+    def test_xacro_generator_gazebo_no_plugin(self, tmp_path):
+        """Test multi-file split write with a gazebo element that lacks plugin tags."""
+        from linkforge.core import GazeboElement
+
+        generator = XACROGenerator()
+        robot = Robot(name="gz_robot")
+        robot.add_link(Link(name="base"))
+
+        # Gazebo element without plugin
+        robot.gazebo_elements = [
+            GazeboElement(reference="base", properties={"self_collide": "true"})
+        ]
+
+        main_filepath = tmp_path / "gz_robot.xacro"
+        generator.write(robot, main_filepath, validate=False)
+        assert main_filepath.exists()
+        # Should NOT write a control file since there were no plugins in gazebo
+        assert not (tmp_path / "gz_robot_ros2_control.xacro").exists()
+
+    def test_mixed_geometry_split_files_and_macro_grouping_edge_cases(self, mocker, tmp_path):
+        """Verify xacro generation with mixed geometry types (Box, Mesh, custom fallback),
+        partial joint limits (lower-only, upper-only), split-file output, and macro
+        grouping resilience when a signature cannot be resolved during generation.
+        """
+        from dataclasses import dataclass
+
+        from linkforge.core import GazeboElement, GazeboPlugin
+        from linkforge.core.models.geometry import Box, GeometryType, Mesh
+        from linkforge.core.models.joint import JointLimits
+        from linkforge.core.models.material import Color, Material
+
+        @dataclass(frozen=True)
+        class CustomGeometry:
+            @property
+            def type(self):
+                return GeometryType.BOX
+
+        robot = Robot(name="comprehensive_robot")
+        base = Link(name="base")
+        link1 = Link(name="link1")
+        link2 = Link(name="link2")
+        link3 = Link(name="link3")
+        link4 = Link(name="link4")
+
+        # Visual/Collision with Box (has origin & material) and Mesh (no origin)
+        mat_red = Material(name="My-Red", color=Color(1.0, 0.0, 0.0, 1.0))
+
+        # Link 1 Visuals
+        vis_mesh = Visual(geometry=Mesh(resource="package://test/mesh.stl"))
+        vis_box = Visual(
+            geometry=Box(size=Vector3(1, 1, 1)),
+            origin=Transform(xyz=Vector3(1, 2, 3), rpy=Vector3(0, 0, 0)),
+            material=mat_red,
+        )
+        vis_custom = Visual(geometry=CustomGeometry(), origin=None)
+
+        link1.add_visual(vis_mesh)
+        link1.add_visual(vis_box)
+        link1.add_visual(vis_custom)
+
+        # Link 1 Collisions
+        coll_mesh = Collision(geometry=Mesh(resource="package://test/col_mesh.dae"))
+        coll_box = Collision(
+            geometry=Box(size=Vector3(1, 1, 1)),
+            origin=Transform(xyz=Vector3(1, 2, 3), rpy=Vector3(0, 0, 0)),
+        )
+        coll_custom = Collision(geometry=CustomGeometry(), origin=None)
+
+        link1.add_collision(coll_mesh)
+        link1.add_collision(coll_box)
+        link1.add_collision(coll_custom)
+
+        # Link 2 visuals/collisions (identical to Link 1 for macro grouping)
+        link2.add_visual(vis_mesh)
+        link2.add_visual(vis_box)
+        link2.add_visual(vis_custom)
+        link2.add_collision(coll_mesh)
+        link2.add_collision(coll_box)
+        link2.add_collision(coll_custom)
+
+        # Link 3 and Link 4 Visuals (standard Box, no origin)
+        vis_box_simple = Visual(geometry=Box(size=Vector3(1, 1, 1)))
+        link3.add_visual(vis_box_simple)
+        link4.add_visual(vis_box_simple)
+
+        robot.add_link(base)
+        robot.add_link(link1)
+        robot.add_link(link2)
+        robot.add_link(link3)
+        robot.add_link(link4)
+
+        # Joints: revolute type
+        # Joint 1 & 2 have limits with lower only
+        j1 = Joint(
+            name="j1",
+            type=JointType.REVOLUTE,
+            parent="base",
+            child="link1",
+            axis=Vector3(0, 0, 1),
+            limits=JointLimits(effort=10.0, velocity=1.0, lower=-1.5, upper=None),
+        )
+        j2 = Joint(
+            name="j2",
+            type=JointType.REVOLUTE,
+            parent="base",
+            child="link2",
+            axis=Vector3(0, 0, 1),
+            limits=JointLimits(effort=10.0, velocity=1.0, lower=-1.5, upper=None),
+        )
+
+        # Joint 3 & 4 have limits with upper only
+        j3 = Joint(
+            name="j3",
+            type=JointType.REVOLUTE,
+            parent="base",
+            child="link3",
+            axis=Vector3(0, 0, 1),
+            limits=JointLimits(effort=10.0, velocity=1.0, lower=None, upper=1.5),
+        )
+        j4 = Joint(
+            name="j4",
+            type=JointType.REVOLUTE,
+            parent="base",
+            child="link4",
+            axis=Vector3(0, 0, 1),
+            limits=JointLimits(effort=10.0, velocity=1.0, lower=None, upper=1.5),
+        )
+
+        robot.add_joint(j1)
+        robot.add_joint(j2)
+        robot.add_joint(j3)
+        robot.add_joint(j4)
+
+        # Gazebo element WITH a plugin AND one WITHOUT a plugin
+        robot.gazebo_elements = [
+            GazeboElement(reference="base", properties={"self_collide": "true"}),
+            GazeboElement(
+                reference="link1", plugins=[GazeboPlugin(name="gz_plugin", filename="libgz.so")]
+            ),
+        ]
+
+        # Patch _get_macro_signature to exercise 224->229 (sig exists but not in macro_groups)
+        original_get_sig = XACROGenerator._get_macro_signature
+
+        def mock_get_sig(self, link, joint):
+            if getattr(self, "_in_generation_phase", False):
+                return "invalid_sig_not_in_macro_groups"
+            return original_get_sig(self, link, joint)
+
+        mocker.patch.object(XACROGenerator, "_get_macro_signature", mock_get_sig)
+
+        original_identify = XACROGenerator._identify_macro_groups
+
+        def mock_identify(self, robot):
+            res = original_identify(self, robot)
+            self._in_generation_phase = True
+            return res
+
+        mocker.patch.object(XACROGenerator, "_identify_macro_groups", mock_identify)
+
+        # Run generator in split files mode
+        gen = XACROGenerator(generate_macros=True, split_files=True)
+        main_filepath = tmp_path / "comprehensive_robot.xacro"
+        gen.write(robot, main_filepath, validate=False)
+        assert main_filepath.exists()

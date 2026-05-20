@@ -3,8 +3,8 @@
 from pathlib import Path
 
 import pytest
-from linkforge_core.exceptions import RobotModelError
-from linkforge_core.validation.security import (
+from linkforge.core import RobotModelError, RobotParserIOError, SRDFParser, URDFParser
+from linkforge.core.validation import (
     find_sandbox_root,
     validate_mesh_path,
     validate_package_uri,
@@ -101,13 +101,12 @@ class TestValidateMeshPath:
 
     def test_url_encoded_path(self, tmp_path) -> None:
         """Test that URL-encoded paths are decoded."""
-        from linkforge_core.validation.security import validate_mesh_path
 
         urdf_dir = tmp_path / "robot"
         urdf_dir.mkdir()
 
         # URL-encoded path (space as %20)
-        encoded_path = "meshes/my%20file.stl"
+        encoded_path = Path("meshes/my%20file.stl")
         result = validate_mesh_path(encoded_path, urdf_dir)
 
         # Should decode to normal path
@@ -116,7 +115,7 @@ class TestValidateMeshPath:
 
 def test_find_sandbox_root(tmp_path) -> None:
     """Test the sandbox root detection logic."""
-    # 1. Standard URDF folder structure
+    # Standard URDF folder structure
     package_root = tmp_path / "my_robot"
     urdf_dir = package_root / "urdf"
     urdf_dir.mkdir(parents=True)
@@ -124,14 +123,14 @@ def test_find_sandbox_root(tmp_path) -> None:
 
     assert find_sandbox_root(robot_file) == package_root
 
-    # 1.5. XACRO folder parent detection
+    # XACRO folder parent detection
     # If the parent folder is literally named 'xacro', it should go up one level
     xacro_dir = package_root / "xacro"
     xacro_dir.mkdir()
     xacro_file = xacro_dir / "robot.xacro"
     assert find_sandbox_root(xacro_file) == package_root
 
-    # 2. Package.xml detection
+    # Package.xml detection
     other_root = tmp_path / "other_pkg"
     sub_dir = other_root / "subdir" / "deep"
     sub_dir.mkdir(parents=True)
@@ -141,12 +140,12 @@ def test_find_sandbox_root(tmp_path) -> None:
     # It should find the package.xml root from the grandparent
     assert find_sandbox_root(robot_file_2) == other_root
 
-    # 3. Test loop termination (root reached)
+    # Test loop termination (root reached)
     # If we are at the root, it should just return the parent
     root_file = tmp_path / "root.urdf"
     assert find_sandbox_root(root_file) == tmp_path
 
-    # 4. Fallback to parent
+    # Fallback to parent
     random_dir = tmp_path / "random"
     random_dir.mkdir()
     random_file = random_dir / "test.urdf"
@@ -210,7 +209,7 @@ def test_find_sandbox_root_recursion_break() -> None:
     # Returns current (fake_root).
 
     # We need to type ignore or ensure it quacks like Path
-    res = find_sandbox_root(fake_filepath)
+    res = find_sandbox_root(fake_filepath)  # type: ignore[arg-type]
     assert res == fake_root
 
 
@@ -226,3 +225,48 @@ def test_package_uri_security_validation() -> None:
         validate_package_uri("package://pkg/./mesh.stl")
     with pytest.raises(RobotModelError):
         validate_package_uri("package://pkg//mesh.stl")
+
+
+class TestParserSecurity:
+    """Tests verifying the centralized security hardening in RobotXMLParser."""
+
+    def test_xacro_early_exit_on_oversized_file(self, tmp_path) -> None:
+        """Verify that parse_xacro exits early if the source file is too large.
+
+        This is critical because it prevents XACRO resolution (which is heavy)
+        from starting on potentially malicious large files.
+        """
+        huge_file = tmp_path / "huge.xacro"
+        huge_file.write_text("<robot/>" * 100)  # ~800 bytes
+
+        # Set limit to 100 bytes
+        parser = URDFParser(max_file_size=100)
+        with pytest.raises(RobotParserIOError, match="File too large"):
+            parser.parse_xacro(huge_file)
+
+    def test_urdf_parse_string_size_limit(self) -> None:
+        """Verify that URDF parse_string enforces size limits."""
+        parser = URDFParser(max_file_size=50)
+        content = "<robot>" + " " * 100 + "</robot>"
+        with pytest.raises(RobotParserIOError, match="Content too large"):
+            parser.parse_string(content)
+
+    def test_srdf_parse_string_size_limit(self) -> None:
+        """Verify that SRDF parse_string enforces size limits."""
+        parser = SRDFParser(max_file_size=50)
+        content = "<robot>" + " " * 100 + "</robot>"
+        with pytest.raises(RobotParserIOError, match="Content too large"):
+            parser.parse_string(content)
+
+    def test_non_existent_file_consistent_error(self) -> None:
+        """Verify that missing files produce consistent errors across parsers."""
+        urdf_parser = URDFParser()
+        srdf_parser = SRDFParser()
+
+        path = Path("non_existent_logic_test.xml")
+
+        with pytest.raises(RobotParserIOError, match="File not found"):
+            urdf_parser.parse(path)
+
+        with pytest.raises(RobotParserIOError, match="File not found"):
+            srdf_parser.parse(path)

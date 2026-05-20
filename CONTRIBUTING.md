@@ -60,8 +60,8 @@ just install
 # Run tests to verify everything works
 just test
 
-# Run linter
-just lint
+# Run linter and type checker
+just check
 
 # Build extension
 just build
@@ -72,7 +72,7 @@ just build
 ```
 linkforge/
 ├── core/                  # Core Robotics Logic (pip package)
-│   └── src/linkforge_core/
+│   └── src/linkforge/core/
 ├── platforms/
 │   └── blender/           # Blender Extension (.zip)
 ├── tests/                 # Test Suite (unit + integration)
@@ -112,8 +112,13 @@ git checkout -b feature/your-feature-name
 ### 3. Run Quality Checks
 
 ```bash
-# Run all tests
+# Run all tests (Core + Blender)
 just test
+
+# Run specific tiers
+just test-core                 # Fast core logic (unit + integration)
+just test-unit-blender         # Mocked platform logic unit tests
+just test-integration-blender  # Full Blender integration tests
 
 # Run linter and type checker
 just check
@@ -122,20 +127,35 @@ just check
 just fix
 ```
 
-### 4. Test in Blender
+### 4. Live Testing in Blender (Development Mode)
+
+LinkForge uses a **Development Junction** system to link your workspace directly into Blender without needing to build and re-install packages.
 
 ```bash
-# Build extension
-just build
+# 1. Establish the link (Run once)
+just develop
 
-# Install in Blender:
-# 1. Open Blender
-# 2. Edit > Preferences > Get Extensions
-# 3. Dropdown (⌄) > Install from Disk
-# 4. Select dist/linkforge-blender-x.x.x-macos_arm64.zip (or your platform variant)
+# 2. Open Blender
+# 3. Edit > Preferences > Extensions
+# 4. Search for "LinkForge" and Enable it
 ```
 
-### 5. Commit Changes
+Any changes you make to the `.py` files in your editor will be instantly available in Blender (you only need to restart Blender or reload the extension).
+
+### 5. Testing the Release (Optional)
+
+If you want to verify the final user experience (including bundled wheels):
+
+```bash
+# 1. Build the production ZIPs
+just build
+
+# 2. In Blender: Edit > Preferences > Extensions
+# 3. Dropdown (⌄) > Install from Disk
+# 4. Select dist/linkforge-blender-x.x.x-macos_arm64.zip
+```
+
+### 6. Commit Changes
 
 ```bash
 git add .
@@ -155,15 +175,13 @@ git commit -s -m "feat: add your feature description"
 
 ### Running Tests
 
-LinkForge uses a **split-testing architecture** to maintain CI stability:
+LinkForge uses a **Tiered Testing Architecture** to balance speed and fidelity:
 
-```bash
-# 1. Run core tests (Standard Python)
-just test-core
-
-# 2. Run Blender integration tests (Requires Blender)
-just test-blender
-```
+| Tier | Command | Scope |
+|---|---|---|
+| **Core** | `just test-core` | Models, Kinematics, Parsers (Zero-deps) |
+| **Logic** | `just test-unit-blender` | Blender Adapters & Math (Mocked `bpy`) |
+| **Integration** | `just test-integration-blender` | Real Scene Interaction (Real Blender) |
 
 See [Automated Testing](https://linkforge.readthedocs.io/en/latest/reference/testing/automated_testing.html) for our full strategy and coverage metrics.
 
@@ -177,7 +195,7 @@ just coverage
 uv run pytest tests/unit/core/test_robot.py
 
 # Run specific Blender integration test file (manual)
-uv run python blender_launcher.py tests/integration/platforms/blender/test_roundtrip.py
+uv run python scripts/blender_launcher.py tests/integration/platforms/blender/test_roundtrip.py
 ```
 
 ### Manual QA (Mandatory)
@@ -198,7 +216,7 @@ def test_link_creation():
         name="test_link",
         visuals=[],
         collisions=[],
-        inertial=Inertial(mass=1.0, inertia=InertiaTensor(...))
+        inertial=Inertial(mass=1.0, inertia=InertiaTensor.zero())
     )
     assert link.name == "test_link"
     assert link.inertial.mass == 1.0
@@ -212,8 +230,16 @@ def test_sensor_roundtrip():
     # Create robot with sensor
     robot = Robot(
         name="test",
-        links=[Link(...)],
-        sensors=[Sensor(origin=Transform(xyz=(0.1, 0, 0.2)))]
+        initial_links=[Link(name="base_link")],
+        initial_sensors=[
+            Sensor(
+                name="test_camera",
+                type=SensorType.CAMERA,
+                link_name="base_link",
+                camera_info=CameraInfo(),
+                origin=Transform(xyz=(0.1, 0.0, 0.2))
+            )
+        ]
     )
 
     # Export to URDF
@@ -221,7 +247,7 @@ def test_sensor_roundtrip():
     urdf = generator.generate(robot)
 
     # Re-import
-    from linkforge_core.parsers import URDFParser
+    from linkforge.core import URDFParser
     robot2 = URDFParser().parse_string(urdf)
 
     # Verify sensor origin preserved
@@ -234,24 +260,26 @@ def test_sensor_roundtrip():
 > [!TIP]
 > **Use Central Fixtures**: Always use the `examples_dir` fixture from `tests/conftest.py` when accessing example URDFs. Avoid hardcoding relative paths like `../../examples`.
 
-### Testing Philosophy ("Real Data over Mocks")
+We follow a **Tiered Mocking Strategy** based on the level of interaction:
 
-We prioritize testing with **real objects and environments** over mocking.
+1.  **Platform Logic Tests** (`unit/platforms/`): **Prefer Mocks**.
+    - For math and transformation logic in adapters, use `unittest.mock` to verify inputs/outputs.
+    - This allows for sub-second developer loops without booting Blender.
 
-1.  **Blender Tests**: Prefer real `bpy` objects and a headless Blender instance.
+2.  **Integration Tests** (`integration/platforms/`): **Prefer Real Data**.
+    - For scene manipulation and UI operators, use a real (headless) Blender instance.
     - Use `bpy.ops.object.empty_add()` to create real objects in your test fixtures.
-    - **Mock only when necessary**: GPU internals (`gpu.shader`, `gpu.matrix`), addon preferences in non-Blender pytest, and I/O error paths.
-    - **Avoid**: Mocking `bpy.types`, Blender data structures, or "dummy" property classes for happy-path tests.
+    - Use the `blender_clean_scene` fixture to ensure environment isolation.
 
-2.  **Core Tests**: Use real data models.
+3.  **Core Tests** (`unit/core/`): **Zero Dependencies**.
     - Instantiate real `Robot`, `Link`, or `Joint` objects.
-    - **Mock only for edge cases**: Missing optional dependencies, filesystem failures, or states that can't be constructed through normal validation.
+    - **Mock only for external edge cases**: Filesystem failures or missing optional dependencies.
 
 ### Debugging in Blender
 
 ```python
-import logging
-logger = logging.getLogger(__name__)
+from linkforge.core import get_logger
+logger = get_logger(__name__)
 logger.error(f"Debug: {variable}")
 
 # View in Blender Console (Window > Toggle System Console)
@@ -261,31 +289,32 @@ logger.error(f"Debug: {variable}")
 
 ### Python Style Guide
 
-We follow **PEP 8** with some modifications. Always use **type hints** and **Google-style docstrings** (required for ReadTheDocs API docs):
+### Documentation Standards (Lean Google Style)
+
+We follow a **Lean Google Style** for documentation. Every module and class must be documented to provide high-level context and component breakdowns:
+
+1.  **Module Headers**: Summarize the purpose and categorize key components (Models, Validators, Utilities).
+2.  **Concise Summaries**: Focus on *intent* and *physical implications* rather than just restating the signature.
+3.  **Core Components**: Use a structured list in module docstrings to identify the main actors.
 
 ```python
-# Good: Clear, typed, documented
-def calculate_inertia(geometry: Box, mass: float) -> InertiaTensor:
-    """Calculate inertia tensor for a box.
+"""Module title.
 
-    Args:
-        geometry: Box geometry with dimensions
-        mass: Total mass in kg
+Brief high-level summary of role in the IR.
 
-    Returns:
-        Inertia tensor for the box
-
-    Raises:
-        RobotModelError: If mass is non-positive
-    """
-    if mass <= 0:
-        raise RobotModelError("Mass must be positive")
-
-    # Calculate moments of inertia
-    ixx = (mass / 12.0) * (geometry.size.y**2 + geometry.size.z**2)
-    # ...
-    return InertiaTensor(ixx=ixx, ...)
+Core Components:
+    - ComponentA: Brief role description.
+    - ComponentB: Brief role description.
+"""
 ```
+
+### "Physics as Truth" Design Principle
+
+LinkForge follows a strict **Physics as Truth** philosophy. The Intermediate Representation (IR) is not just a data structure; it is a physical model that must remain stable and plausible at all times.
+
+- **Strict Validation**: All models (Link, Joint, Sensor) must implement `__post_init__` guardrails for physical properties (e.g., non-negative mass, normalized axes, valid LIDAR ranges).
+- **Orchestrated Checks**: Global consistency (cycles, connectivity, ros2_control limits) is enforced by the `RobotValidator`.
+- **Fail Fast**: We prefer a `RobotValidationError` at construction time over a physics engine crash at runtime.
 
 ```python
 # Good ✅
@@ -299,17 +328,7 @@ def parse_float(text, default=None):
 
 ### Linting Configuration
 
-Our `ruff` configuration (in `pyproject.toml`):
-
-```toml
-[tool.ruff]
-line-length = 100
-target-version = "py311"
-
-[tool.ruff.lint]
-select = ["E", "F", "I", "N", "UP", "B", "A", "C4", "SIM"]
-ignore = ["E501", "N801"]  # Line length (formatter) & naming convention
-```
+Our project rigorously enforces code quality using `ruff`. The definitive configuration (including line length, target version, and active rule sets) is maintained centrally in `pyproject.toml`. Please refer to the `[tool.ruff.lint]` section in that file for the current active and ignored rules.
 
 ### Pre-commit Hooks
 
@@ -372,7 +391,7 @@ Use conventional commits:
 LinkForge uses **Release Please** to automate versioning and changelogs.
 
 1. **Automation**: When code is merged into `main`, Release Please will automatically create (or update) a "Release PR".
-2. **Versioning**: This PR will contain a version bump in `blender_manifest.toml`, `CITATION.cff`, and an updated `CHANGELOG.md` based on your commit messages.
+2. **Versioning**: This PR will contain a version bump in `pyproject.toml`, `blender_manifest.toml`, `CITATION.cff`, and an updated `CHANGELOG.md` based on your commit messages.
 3. **Merging**: Once a maintainer merges this Release PR, a GitHub Tag and Release are automatically created.
 4. **Distribution**: The `release-please.yml` workflow will then build the extension `.zip` and attach it to the GitHub Release.
 
@@ -392,7 +411,7 @@ To maintain LinkForge's status as a professional-grade **Linter & Bridge**, we p
 
 ### 1. The Blender Bridge (Foundation)
 LinkForge must remain compatible with the latest Blender LTS (Long Term Support) and the current stable release.
-- **Vigilance**: When a new Blender version (e.g., 5.0) enters Beta, we prioritize testing our `export_ops.py` to ensure no API breaking changes affect our users.
+- **Vigilance**: When a new Blender version (e.g., 6.0) enters Beta, we prioritize testing our Blender integration to ensure no API breaking changes affect our users.
 
 ### 2. URDF/XACRO Fidelity (Core)
 Our primary goal is 100% compliance with official specifications.
@@ -406,7 +425,7 @@ While LinkForge supports `ros2_control`, it is designed to be distribution-agnos
 
 ### 4. Validation Extensibility (Quality Control)
 To maintain the highest standards of robot description quality, LinkForge uses a **Modular Validation Registry**.
-- **The Rule**: Every new core model feature must be accompanied by a corresponding `ValidationCheck` in `core/src/linkforge_core/validation/checks.py`.
+- **The Rule**: Every new core model feature must be accompanied by a corresponding `ValidationCheck` in `core/src/linkforge/core/validation/checks.py`.
 - **Implementation**: Inherit from `ValidationCheck`, implement the `run()` method, and append your class to `RobotValidator.DEFAULT_CHECKS`.
 - **Testing**: Add isolated unit tests for your new check in `tests/unit/core/test_validation_checks.py`.
 
@@ -459,6 +478,8 @@ If you've contributed (code, docs, ideas, etc.), you can ask the bot to add you 
 Replace `<contribution-type>` with one of the [valid contribution types](https://allcontributors.org/docs/en/emoji-key) (e.g., `code`, `doc`, `bug`, etc.).
 
 ### Academic Recognition
-For significant core contributions (new sensor systems, physics engine refinements, major architectural changes), we may invite you to be listed as a co-author in the `CITATION.cff` file and the official documentation, ensuring your work is properly attributed in academic research using LinkForge.
+For profound core contributions (e.g., advanced mathematical noise models, novel simulator integrations, or deep physics engine refinements), we may invite you to be listed as a co-author in the `CITATION.cff` file and the official documentation. This ensures your high-level domain expertise is properly attributed in future academic research using LinkForge.
+
+*(Note: Standard features, basic sensor additions, and bug fixes are highly valued and will be celebrated via our standard Open Source contributors framework, but they do not automatically qualify for academic co-authorship).*
 
 Thank you for contributing to LinkForge! 🚀

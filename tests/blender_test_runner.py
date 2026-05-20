@@ -15,15 +15,12 @@ def setup_environment():
     # Get the project root directory
     project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
-    # Add platforms/blender to sys.path
-    blender_path = os.path.join(project_root, "platforms", "blender")
-    if blender_path not in sys.path:
-        sys.path.insert(0, blender_path)
-
-    # Add core/src to sys.path (required for linkforge_core dependency)
+    # Add platforms/blender/src and core/src to sys.path
+    blender_path = os.path.join(project_root, "platforms", "blender", "src")
     core_path = os.path.join(project_root, "core", "src")
-    if core_path not in sys.path:
-        sys.path.insert(0, core_path)
+    for p in [project_root, blender_path, core_path]:
+        if p not in sys.path:
+            sys.path.insert(0, p)
 
     # Ensure pytest is available in Blender's Python
     if importlib.util.find_spec("pytest") is None:
@@ -54,9 +51,10 @@ def setup_environment():
 
 def run_tests():
     """Execute pytest within the Blender environment."""
+    import pytest
+
     project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
     test_dirs = [
-        os.path.join(project_root, "tests", "unit", "platforms", "blender"),
         os.path.join(project_root, "tests", "integration", "platforms", "blender"),
     ]
 
@@ -82,8 +80,6 @@ def run_tests():
 
     if not has_target:
         args.extend(test_dirs)
-
-    import pytest
 
     exit_code = pytest.main(args)
 

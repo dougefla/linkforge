@@ -3,15 +3,16 @@
 import xml.etree.ElementTree as ET
 
 import pytest
-from linkforge_core.base import RobotGeneratorError
-from linkforge_core.generators.urdf_generator import URDFGenerator
-from linkforge_core.models import (
+from linkforge.core import (
     Box,
     CameraInfo,
     Collision,
     Color,
+    ContactInfo,
     Cylinder,
+    ForceTorqueInfo,
     GazeboElement,
+    GazeboPlugin,
     GPSInfo,
     IMUInfo,
     Inertial,
@@ -25,19 +26,25 @@ from linkforge_core.models import (
     JointType,
     LidarInfo,
     Link,
+    LinkPhysics,
     Material,
     Mesh,
     Robot,
+    RobotGeneratorError,
     Ros2Control,
+    Ros2ControlJoint,
     Sensor,
     SensorNoise,
     SensorType,
     Sphere,
     Transform,
+    Transmission,
+    TransmissionActuator,
+    TransmissionJoint,
+    URDFGenerator,
     Vector3,
     Visual,
 )
-from linkforge_core.models.transmission import Transmission, TransmissionActuator, TransmissionJoint
 
 
 class TestURDFGenerator:
@@ -52,13 +59,15 @@ class TestURDFGenerator:
         robot.add_joint(Joint(name="j1", parent="base_link", child="child", type=JointType.FIXED))
 
         generator = URDFGenerator(pretty_print=False)
-        xml_str = generator.generate(robot)
+        xml_str = generator.generate(robot, validate=False)
 
         root = ET.fromstring(xml_str)
         assert root.tag == "robot"
         assert root.get("name") == "test_robot"
         assert len(root.findall("link")) == 2
-        assert root.find("link").get("name") == "base_link"
+        link_elem = root.find("link")
+        assert link_elem is not None
+        assert link_elem.get("name") == "base_link"
 
     def test_generate_geometries(self) -> None:
         """Test generating all geometry types."""
@@ -82,21 +91,29 @@ class TestURDFGenerator:
         robot.add_joint(Joint(name="j1", parent="base_link", child="child", type=JointType.FIXED))
 
         generator = URDFGenerator(pretty_print=False)
-        xml_str = generator.generate(robot)
+        xml_str = generator.generate(robot, validate=False)
         root = ET.fromstring(xml_str)
 
         link_elem = root.find("link")
+        assert link_elem is not None
         visuals = link_elem.findall("visual")
         assert len(visuals) == 4
 
-        assert visuals[0].find("geometry/box").get("size") == "1 2 3"
+        box_elem = visuals[0].find("geometry/box")
+        assert box_elem is not None
+        assert box_elem.get("size") == "1 2 3"
 
-        assert visuals[1].find("geometry/cylinder").get("radius") == "0.5"
-        assert visuals[1].find("geometry/cylinder").get("length") == "2"
+        cyl_elem = visuals[1].find("geometry/cylinder")
+        assert cyl_elem is not None
+        assert cyl_elem.get("radius") == "0.5"
+        assert cyl_elem.get("length") == "2"
 
-        assert visuals[2].find("geometry/sphere").get("radius") == "1"
+        sph_elem = visuals[2].find("geometry/sphere")
+        assert sph_elem is not None
+        assert sph_elem.get("radius") == "1"
 
         mesh_elem = visuals[3].find("geometry/mesh")
+        assert mesh_elem is not None
         assert mesh_elem.get("filename") == "meshes/part.stl"
         assert mesh_elem.get("scale") == "0.1 0.1 0.1"
 
@@ -129,7 +146,8 @@ class TestURDFGenerator:
 
         materials = root.findall("material")
         assert len(materials) == 2
-        names = sorted([m.get("name") for m in materials])
+        # Use str() cast to ensure all elements are strings for sorted()
+        names = sorted([str(m.get("name")) for m in materials])
         assert names == ["blue", "red"]
 
         # Check references in visuals
@@ -138,8 +156,11 @@ class TestURDFGenerator:
 
         links = root.findall("link")
         vis1 = links[0].find("visual")
-        assert vis1.find("material").get("name") == "red"
-        assert vis1.find("material").find("color") is None  # Should be reference
+        assert vis1 is not None
+        mat_elem = vis1.find("material")
+        assert mat_elem is not None
+        assert mat_elem.get("name") == "red"
+        assert mat_elem.find("color") is None  # Should be reference
 
     def test_generate_materials_conflict(self) -> None:
         """Test material conflict (same name, different color) -> Inline."""
@@ -167,12 +188,18 @@ class TestURDFGenerator:
         # Inline definitions
         links = root.findall("link")
         vis1 = links[0].find("visual/material")
+        assert vis1 is not None
         assert vis1.get("name") == "generic"
-        assert vis1.find("color").get("rgba") == "1 0 0 1"
+        color1 = vis1.find("color")
+        assert color1 is not None
+        assert color1.get("rgba") == "1 0 0 1"
 
         vis2 = links[1].find("visual/material")
+        assert vis2 is not None
         assert vis2.get("name") == "generic"
-        assert vis2.find("color").get("rgba") == "0 0 1 1"
+        color2 = vis2.find("color")
+        assert color2 is not None
+        assert color2.get("rgba") == "0 0 1 1"
 
     def test_generate_joints(self) -> None:
         """Test generating joints with limits and dynamics."""
@@ -201,25 +228,40 @@ class TestURDFGenerator:
         root = ET.fromstring(xml_str)
 
         joint_elem = root.find('joint[@name="arm_joint"]')
+        assert joint_elem is not None
         assert joint_elem.get("name") == "arm_joint"
         assert joint_elem.get("type") == "revolute"
 
-        assert joint_elem.find("parent").get("link") == "parent"
-        assert joint_elem.find("child").get("link") == "child"
-        assert joint_elem.find("origin").get("xyz") == "1 0 0"
-        assert joint_elem.find("axis").get("xyz") == "0 0 1"
+        parent_node = joint_elem.find("parent")
+        assert parent_node is not None
+        assert parent_node.get("link") == "parent"
+
+        child_node = joint_elem.find("child")
+        assert child_node is not None
+        assert child_node.get("link") == "child"
+
+        origin_node = joint_elem.find("origin")
+        assert origin_node is not None
+        assert origin_node.get("xyz") == "1 0 0"
+
+        axis_node = joint_elem.find("axis")
+        assert axis_node is not None
+        assert axis_node.get("xyz") == "0 0 1"
 
         limit = joint_elem.find("limit")
+        assert limit is not None
         assert limit.get("effort") == "100"
         assert limit.get("velocity") == "5"
         assert limit.get("lower") == "-1.57"
         assert limit.get("upper") == "1.57"
 
         dyn = joint_elem.find("dynamics")
+        assert dyn is not None
         assert dyn.get("damping") == "0.1"
         assert dyn.get("friction") == "0.2"
 
         mimic = joint_elem.find("mimic")
+        assert mimic is not None
         assert mimic.get("joint") == "other_joint"
         assert mimic.get("multiplier") == "2"
         assert mimic.get("offset") == "0.5"
@@ -251,7 +293,7 @@ class TestURDFGenerator:
         robot.add_joint(joint)
 
         generator = URDFGenerator()
-        xml_str = generator.generate(robot)
+        xml_str = generator.generate(robot, validate=False)
         root = ET.fromstring(xml_str)
 
         joint_elem = root.find(".//joint[@name='j1']")
@@ -283,14 +325,21 @@ class TestURDFGenerator:
         robot.add_joint(Joint(name="j1", parent="body", child="child", type=JointType.FIXED))
 
         generator = URDFGenerator(pretty_print=False)
-        xml_str = generator.generate(robot)
+        xml_str = generator.generate(robot, validate=False)
         root = ET.fromstring(xml_str)
 
         inertial_elem = root.find("link/inertial")
-        assert inertial_elem.find("mass").get("value") == "10"
-        assert inertial_elem.find("origin").get("xyz") == "0 0 0.5"
+        assert inertial_elem is not None
+        mass_elem = inertial_elem.find("mass")
+        assert mass_elem is not None
+        assert mass_elem.get("value") == "10"
+
+        origin_elem = inertial_elem.find("origin")
+        assert origin_elem is not None
+        assert origin_elem.get("xyz") == "0 0 0.5"
 
         inertia = inertial_elem.find("inertia")
+        assert inertia is not None
         assert inertia.get("ixx") == "1"
         assert inertia.get("ixy") == "0"
 
@@ -325,13 +374,14 @@ class TestURDFGenerator:
         robot.add_joint(Joint(name="j1", parent="base", child="child", type=JointType.FIXED))
 
         # Generate to a file in tmp_path (parent of meshes)
-        urdf_path = tmp_path / "robot.urdf"
-        generator = URDFGenerator(urdf_path=urdf_path)
+        output_path = tmp_path / "robot.urdf"
+        generator = URDFGenerator(output_path=output_path)
 
-        xml_str = generator.generate(robot)
+        xml_str = generator.generate(robot, validate=False)
         root = ET.fromstring(xml_str)
 
         mesh_elem = root.find("link/visual/geometry/mesh")
+        assert mesh_elem is not None
         # Should be relative: "meshes/geom.stl"
         assert mesh_elem.get("filename") == "meshes/geom.stl"
 
@@ -361,18 +411,23 @@ class TestURDFGenerator:
                     mechanical_reduction=50.0,
                 )
             ],
+            actuators=[TransmissionActuator(name="actuator1")],
         )
         robot.add_transmission(trans)
 
         generator = URDFGenerator(pretty_print=False)
-        xml_str = generator.generate(robot)
+        xml_str = generator.generate(robot, validate=False)
         root = ET.fromstring(xml_str)
 
         trans_elem = root.find("transmission")
+        assert trans_elem is not None
         assert trans_elem.get("name") == "arm_trans"
-        assert trans_elem.find("type").text == "transmission_interface/SimpleTransmission"
+        type_elem = trans_elem.find("type")
+        assert type_elem is not None
+        assert type_elem.text == "transmission_interface/SimpleTransmission"
 
         joint_elem = trans_elem.find("joint")
+        assert joint_elem is not None
         assert joint_elem.get("name") == "arm_joint"
 
         hw_ifaces = joint_elem.findall("hardwareInterface")
@@ -382,7 +437,9 @@ class TestURDFGenerator:
         assert hw_ifaces[0].text == "position"
         assert hw_ifaces[1].text == "velocity"
 
-        assert joint_elem.find("mechanicalReduction").text == "50"
+        mech_red = joint_elem.find("mechanicalReduction")
+        assert mech_red is not None
+        assert mech_red.text == "50"
 
     def test_generate_sensors(self) -> None:
         """Test generating various sensors."""
@@ -391,14 +448,6 @@ class TestURDFGenerator:
         robot.add_link(link)
         robot.add_link(Link(name="child"))
         robot.add_joint(Joint(name="j1", parent="base", child="child", type=JointType.FIXED))
-
-        from linkforge_core.models.sensor import (
-            CameraInfo,
-            LidarInfo,
-            Sensor,
-            SensorNoise,
-            SensorType,
-        )
 
         lidar = Sensor(
             name="lidar",
@@ -427,6 +476,13 @@ class TestURDFGenerator:
             ),
         )
         robot.add_sensor(camera)
+        gpu_lidar = Sensor(
+            name="gpu_lidar_sensor",
+            type=SensorType.GPU_LIDAR,
+            link_name="base",
+            lidar_info=LidarInfo(horizontal_samples=128),
+        )
+        robot.add_sensor(gpu_lidar)
 
         generator = URDFGenerator(pretty_print=False)
         xml_str = generator.generate(
@@ -440,47 +496,77 @@ class TestURDFGenerator:
         lidar_gazebo = next(g for g in gazebos if g.find("sensor[@name='lidar']") is not None)
         assert lidar_gazebo.get("reference") == "base"
         sensor_elem = lidar_gazebo.find("sensor")
-        assert sensor_elem.get("type") == "gpu_lidar"  # mapped type
-        assert sensor_elem.find("update_rate").text == "10"
+        assert sensor_elem is not None
+        assert sensor_elem.get("type") == "lidar"  # mapped type
+        update_rate = sensor_elem.find("update_rate")
+        assert update_rate is not None
+        assert update_rate.text == "10"
 
         ray = sensor_elem.find("ray")
-        assert ray.find("scan/horizontal/samples").text == "720"
-        assert ray.find("range/max").text == "10"
+        assert ray is not None
+        samples = ray.find("scan/horizontal/samples")
+        assert samples is not None
+        assert samples.text == "720"
+        max_range = ray.find("range/max")
+        assert max_range is not None
+        assert max_range.text == "10"
 
         cam_gazebo = next(g for g in gazebos if g.find("sensor[@name='camera']") is not None)
         cam_sensor = cam_gazebo.find("sensor")
+        assert cam_sensor is not None
         assert cam_sensor.get("type") == "camera"
 
+        gpu_gazebo = next(
+            g for g in gazebos if g.find("sensor[@name='gpu_lidar_sensor']") is not None
+        )
+        gpu_sensor = gpu_gazebo.find("sensor")
+        assert gpu_sensor is not None
+        assert gpu_sensor.get("type") == "gpu_lidar"
+
         cam_elem = cam_sensor.find("camera")
-        assert cam_elem.find("image/width").text == "640"
-        assert cam_elem.find("noise/type").text == "gaussian"
-        assert cam_elem.find("noise/stddev").text == "0.01"
+        assert cam_elem is not None
+        img_width = cam_elem.find("image/width")
+        assert img_width is not None
+        assert img_width.text == "640"
+
+        noise_type = cam_elem.find("noise/type")
+        assert noise_type is not None
+        assert noise_type.text == "gaussian"
+
+        noise_std = cam_elem.find("noise/stddev")
+        assert noise_std is not None
+        assert noise_std.text == "0.01"
 
     def test_gazebo_elements(self) -> None:
         """Test generating gazebo extension elements."""
         robot = Robot(name="gz_robot")
-        link = Link(name="base")
-        robot.add_link(link)
+        # Gazebo element for link with material color
+        # Physics are set on the link
+        link = Link(name="base", physics=LinkPhysics(gravity=False, self_collide=True))
+        robot = Robot(name="gz_robot", links=[link])
         robot.add_link(Link(name="child"))
         robot.add_joint(Joint(name="j1", parent="base", child="child", type=JointType.FIXED))
 
-        from linkforge_core.models.gazebo import GazeboElement
-
-        # Gazebo element for link with material color
-        gz = GazeboElement(
-            reference="base", material="Gazebo/Blue", gravity=False, self_collide=True
-        )
+        gz = GazeboElement(reference="base", material="Gazebo/Blue")
         robot.add_gazebo_element(gz)
 
         generator = URDFGenerator(pretty_print=False)
-        xml_str = generator.generate(robot)
+        xml_str = generator.generate(robot, validate=False)
         root = ET.fromstring(xml_str)
 
         gz_elem = root.find("gazebo[@reference='base']")
         assert gz_elem is not None
-        assert gz_elem.find("material").text == "Gazebo/Blue"
-        assert gz_elem.find("gravity").text == "false"
-        assert gz_elem.find("selfCollide").text == "true"
+        mat_node = gz_elem.find("material")
+        assert mat_node is not None
+        assert mat_node.text == "Gazebo/Blue"
+
+        grav_node = gz_elem.find("gravity")
+        assert grav_node is not None
+        assert grav_node.text == "false"
+
+        collide_node = gz_elem.find("selfCollide")
+        assert collide_node is not None
+        assert collide_node.text == "true"
 
     def test_generate_ros2_control_auto(self) -> None:
         """Test auto-generation of ros2_control from transmissions."""
@@ -503,8 +589,6 @@ class TestURDFGenerator:
             )
         )
 
-        from linkforge_core.models.transmission import Transmission, TransmissionJoint
-
         # Add a transmission
         trans = Transmission(
             name="arm_trans",
@@ -512,6 +596,7 @@ class TestURDFGenerator:
             joints=[
                 TransmissionJoint(name="arm_joint", hardware_interfaces=["PositionJointInterface"])
             ],
+            actuators=[TransmissionActuator(name="actuator1")],
         )
         robot.add_transmission(trans)
 
@@ -523,11 +608,16 @@ class TestURDFGenerator:
         rc_elem = root.find("ros2_control")
         assert rc_elem is not None
         assert rc_elem.get("name") == "GazeboSimSystem"
-        assert rc_elem.find("hardware/plugin").text == "gz_ros2_control/GazeboSimSystem"
+        plugin_node = rc_elem.find("hardware/plugin")
+        assert plugin_node is not None
+        assert plugin_node.text == "gz_ros2_control/GazeboSimSystem"
 
         joint_elem = rc_elem.find('joint[@name="arm_joint"]')
+        assert joint_elem is not None
         assert joint_elem.get("name") == "arm_joint"
-        assert joint_elem.find("command_interface").get("name") == "position"
+        cmd_iface = joint_elem.find("command_interface")
+        assert cmd_iface is not None
+        assert cmd_iface.get("name") == "position"
         assert joint_elem.find("state_interface[@name='position']") is not None
         assert joint_elem.find("state_interface[@name='velocity']") is not None
 
@@ -538,8 +628,6 @@ class TestURDFGenerator:
         robot.add_link(link)
         robot.add_link(Link(name="child"))
         robot.add_joint(Joint(name="j1", parent="base", child="child", type=JointType.FIXED))
-
-        from linkforge_core.models.ros2_control import Ros2Control, Ros2ControlJoint
 
         rc = Ros2Control(
             name="MySystem",
@@ -554,17 +642,22 @@ class TestURDFGenerator:
             ],
             parameters={"param1": "value1"},
         )
-        robot.add_ros2_control(rc)
+        # Use internal bypass for out-of-order construction in test
+        robot.ros2_controls = (*robot.ros2_controls, rc)
 
         generator = URDFGenerator(pretty_print=False)
         xml_str = generator.generate(robot, validate=False)
         root = ET.fromstring(xml_str)
 
         rc_elem = root.find("ros2_control")
+        assert rc_elem is not None
         assert rc_elem.get("name") == "MySystem"
-        assert rc_elem.find("hardware/plugin").text == "some_plugin/MySystem"
+        plugin_node = rc_elem.find("hardware/plugin")
+        assert plugin_node is not None
+        assert plugin_node.text == "some_plugin/MySystem"
 
         joint = rc_elem.find('joint[@name="custom_joint"]')
+        assert joint is not None
         assert joint.get("name") == "custom_joint"
         assert len(joint.findall("command_interface")) == 2
         assert len(joint.findall("state_interface")) == 3
@@ -580,8 +673,6 @@ class TestURDFGenerator:
         robot.add_link(link)
         robot.add_link(Link(name="child"))
         robot.add_joint(Joint(name="j1", parent="base", child="child", type=JointType.FIXED))
-
-        from linkforge_core.models.gazebo import GazeboElement, GazeboPlugin
 
         # Plugin with parameters
         p1 = GazeboPlugin(
@@ -600,15 +691,23 @@ class TestURDFGenerator:
         root = ET.fromstring(xml_str)
 
         gz_elem = root.find("gazebo")
+        assert gz_elem is not None
         plugins = gz_elem.findall("plugin")
         assert len(plugins) == 2
 
         pl1 = next(p for p in plugins if p.get("name") == "param_plugin")
-        assert pl1.find("key").text == "value"
-        assert pl1.find("rate").text == "100"
+        key_node = pl1.find("key")
+        assert key_node is not None
+        assert key_node.text == "value"
+
+        rate_node = pl1.find("rate")
+        assert rate_node is not None
+        assert rate_node.text == "100"
 
         pl2 = next(p for p in plugins if p.get("name") == "xml_plugin")
-        assert pl2.find("sub_param").text == "data"
+        sub_node = pl2.find("sub_param")
+        assert sub_node is not None
+        assert sub_node.text == "data"
         assert pl2.find("flag") is not None
 
     def test_generate_more_sensors(self) -> None:
@@ -618,16 +717,6 @@ class TestURDFGenerator:
         robot.add_link(link)
         robot.add_link(Link(name="child"))
         robot.add_joint(Joint(name="j1", parent="base", child="child", type=JointType.FIXED))
-
-        from linkforge_core.models.sensor import (
-            ContactInfo,
-            ForceTorqueInfo,
-            GPSInfo,
-            IMUInfo,
-            Sensor,
-            SensorNoise,
-            SensorType,
-        )
 
         imu = Sensor(
             name="imu",
@@ -686,31 +775,49 @@ class TestURDFGenerator:
         assert "imu" in sensors_map
         imu_elem = sensors_map["imu"].find("imu")
         assert imu_elem is not None, "IMU element missing"
-        assert imu_elem.find("angular_velocity/x/noise/type").text == "gaussian"
-        assert imu_elem.find("linear_acceleration/z/noise/stddev").text == "0.1"
+        ang_noise = imu_elem.find("angular_velocity/x/noise/type")
+        assert ang_noise is not None
+        assert ang_noise.text == "gaussian"
+        lin_noise = imu_elem.find("linear_acceleration/z/noise/stddev")
+        assert lin_noise is not None
+        assert lin_noise.text == "0.1"
 
         assert "gps" in sensors_map
         gps_elem = sensors_map["gps"].find("navsat")
         assert gps_elem is not None, "GPS element (navsat) missing"
         # Position noise uses flattened structure (prefix="")
-        assert gps_elem.find("position_sensing/horizontal/stddev").text == "0.5"
+        pos_noise = gps_elem.find("position_sensing/horizontal/stddev")
+        assert pos_noise is not None
+        assert pos_noise.text == "0.5"
         # Velocity noise uses default structure (prefix="noise")
-        assert gps_elem.find("velocity_sensing/vertical/noise/stddev").text == "0.1"
+        vel_noise = gps_elem.find("velocity_sensing/vertical/noise/stddev")
+        assert vel_noise is not None
+        assert vel_noise.text == "0.1"
 
         assert "ft_sensor" in sensors_map
         ft_sensor = sensors_map["ft_sensor"]
         ft_elem = ft_sensor.find("force_torque")
         assert ft_elem is not None, "ForceTorque element missing"
-        assert ft_elem.find("frame").text == "child"
-        assert ft_elem.find("measure_direction").text == "child_to_parent"
+        frame_node = ft_elem.find("frame")
+        assert frame_node is not None
+        assert frame_node.text == "child"
+        dir_node = ft_elem.find("measure_direction")
+        assert dir_node is not None
+        assert dir_node.text == "child_to_parent"
         # Noise is flattened
-        assert ft_elem.find("stddev").text == "0.01"
+        std_node = ft_elem.find("stddev")
+        assert std_node is not None
+        assert std_node.text == "0.01"
 
         assert "bumper" in sensors_map
         contact_elem = sensors_map["bumper"].find("contact")
         assert contact_elem is not None, "Contact element missing"
-        assert contact_elem.find("collision").text == "base_collision"
-        assert contact_elem.find("noise/stddev").text == "0.01"
+        coll_node = contact_elem.find("collision")
+        assert coll_node is not None
+        assert coll_node.text == "base_collision"
+        noise_std = contact_elem.find("noise/stddev")
+        assert noise_std is not None
+        assert noise_std.text == "0.01"
 
     def test_util_normalize_interface(self) -> None:
         """Test interface name normalization directly via generator subclass wrapper or inspection."""
@@ -723,8 +830,9 @@ class TestURDFGenerator:
 
         trans = Transmission(
             name="t1",
-            type="transmission_interface/SimpleTransmission",
-            joints=[TransmissionJoint(name="j1", hardware_interfaces=["UnknownInterface"])],
+            type="Simple",
+            joints=[TransmissionJoint(name="j1", hardware_interfaces=["PositionJointInterface"])],
+            actuators=[TransmissionActuator(name="a1")],
         )
         robot.add_transmission(trans)
 
@@ -734,6 +842,7 @@ class TestURDFGenerator:
 
         # normalization fallback is "position"
         iface = root.find("transmission/joint/hardwareInterface")
+        assert iface is not None
         assert iface.text == "position"
 
     def test_generate_material_texture(self) -> None:
@@ -751,7 +860,7 @@ class TestURDFGenerator:
         """Test generating multiple collisions with names for a link."""
         coll1 = Collision(name="coll1", geometry=Box(size=Vector3(1, 1, 1)))
         coll2 = Collision(name="coll2", geometry=Sphere(radius=0.5))
-        link = Link(name="l", initial_collisions=[coll1, coll2])
+        link = Link(name="l", collisions=[coll1, coll2])
         gen = URDFGenerator()
         root = ET.Element("robot")
         gen._add_link_element(root, link)
@@ -777,12 +886,17 @@ class TestURDFGenerator:
 
         depth_node = root.find(".//sensor/depth_camera")
         assert depth_node is not None
-        assert depth_node.find("output/type").text == "depth"
+        output_type = depth_node.find("output/type")
+        assert output_type is not None
+        assert output_type.text == "depth"
 
         pose_node = root.find(".//sensor/pose")
         assert pose_node is not None
+        assert pose_node.text is not None
         assert "0.1 0 0.2" in pose_node.text
-        assert root.find(".//sensor/topic").text == "camera/depth"
+        topic_node = root.find(".//sensor/topic")
+        assert topic_node is not None
+        assert topic_node.text == "camera/depth"
 
     def test_generate_3d_lidar(self) -> None:
         """Test generating 3D LIDAR with vertical scan parameters."""
@@ -800,7 +914,9 @@ class TestURDFGenerator:
 
         vert_node = root.find(".//sensor/ray/scan/vertical")
         assert vert_node is not None
-        assert vert_node.find("samples").text == "16"
+        samples_node = vert_node.find("samples")
+        assert samples_node is not None
+        assert samples_node.text == "16"
 
     def test_generate_transmission_with_effort_and_offsets(self) -> None:
         """Test generating transmission with effort interface and joint/actuator offsets."""
@@ -812,8 +928,8 @@ class TestURDFGenerator:
         )
         robot = Robot(
             name="r",
-            initial_links=[Link(name="base"), Link(name="l1")],
-            initial_joints=[
+            links=[Link(name="base"), Link(name="l1")],
+            joints=[
                 Joint(
                     name="j1",
                     parent="base",
@@ -822,10 +938,10 @@ class TestURDFGenerator:
                     axis=Vector3(1, 0, 0),
                 )
             ],
-            initial_transmissions=[trans],
+            transmissions=[trans],
         )
         gen = URDFGenerator(use_ros2_control=True)
-        xml = gen.generate(robot)
+        xml = gen.generate(robot, validate=False)
 
         assert "<offset>0.5</offset>" in xml
         assert "<offset>0.1</offset>" in xml
@@ -869,13 +985,13 @@ class TestURDFGenerator:
         robot.add_link(
             Link(
                 name="mat_link_1",
-                initial_visuals=[Visual(geometry=Box(Vector3(1, 1, 1)), material=mat_red)],
+                visuals=[Visual(geometry=Box(Vector3(1, 1, 1)), material=mat_red)],
             )
         )
         robot.add_link(
             Link(
                 name="mat_link_2",
-                initial_visuals=[Visual(geometry=Box(Vector3(1, 1, 1)), material=mat_blue)],
+                visuals=[Visual(geometry=Box(Vector3(1, 1, 1)), material=mat_blue)],
             )
         )
 
@@ -934,15 +1050,14 @@ class TestURDFGenerator:
     def test_generate_gazebo_custom_properties(self) -> None:
         """Test generating Gazebo element with custom properties."""
         gz = GazeboElement(reference="base", properties={"dampingFactor": "0.1"})
-        robot = Robot(name="r", initial_links=[Link(name="base")], initial_gazebo_elements=[gz])
+        robot = Robot(name="r", links=[Link(name="base")], gazebo_elements=[gz])
         gen = URDFGenerator()
-        xml = gen.generate(robot)
+        xml = gen.generate(robot, validate=False)
 
         assert "<dampingFactor>0.1</dampingFactor>" in xml
 
     def test_generate_gazebo_plugin_whitespace_handling(self) -> None:
         """Test Gazebo plugin whitespace stripping and malformed XML fallback."""
-        from linkforge_core.models.gazebo import GazeboPlugin
 
         # Test Case 1: Whitespace stripping
         raw_xml = "<parent>  <child>   </child>  </parent>   "
@@ -965,18 +1080,19 @@ class TestURDFGenerator:
 
     def test_generate_ros2_control_plugin_detection(self) -> None:
         """Test skipping auto-gz_ros2_control if a plugin already exists."""
-        from linkforge_core.models.gazebo import GazeboPlugin
 
         gz_plugin = GazeboPlugin(name="my_ros2_control", filename="lib.so")
         gz = GazeboElement(plugins=[gz_plugin])
-        # Add a transmission to ensure we enter the logic if it's gated
         trans = Transmission(
-            name="t", joints=[TransmissionJoint(name="j")], type="interface/Simple"
+            name="t",
+            joints=[TransmissionJoint(name="j")],
+            actuators=[TransmissionActuator(name="a")],
+            type="Simple",
         )
         robot = Robot(
             name="r",
-            initial_links=[Link(name="base"), Link(name="child")],
-            initial_joints=[
+            links=[Link(name="base"), Link(name="child")],
+            joints=[
                 Joint(
                     name="j",
                     type=JointType.CONTINUOUS,
@@ -985,30 +1101,31 @@ class TestURDFGenerator:
                     axis=Vector3(1.0, 0.0, 0.0),
                 )
             ],
-            initial_gazebo_elements=[gz],
-            initial_transmissions=[trans],
+            gazebo_elements=[gz],
+            transmissions=[trans],
         )
 
         gen = URDFGenerator(use_ros2_control=True)
-        xml = gen.generate(robot)
+        xml = gen.generate(robot, validate=False)
 
         assert xml.count("libgz_ros2_control-system.so") == 0
         assert "my_ros2_control" in xml
 
     def test_generate_gazebo_physics_properties(self) -> None:
         """Test generating Gazebo physics properties (kp, kd, friction, etc.)."""
-        gz = GazeboElement(
-            reference="base",
-            mu1=0.8,
+        # Physics are set on the link
+
+        phys = LinkPhysics(
+            mu=0.8,
             mu2=0.7,
             kp=1000.0,
             kd=10.0,
             self_collide=True,
             gravity=False,
         )
-        robot = Robot(name="r", initial_links=[Link(name="base")], initial_gazebo_elements=[gz])
+        robot = Robot(name="r", links=[Link(name="base", physics=phys)])
         gen = URDFGenerator()
-        xml = gen.generate(robot)
+        xml = gen.generate(robot, validate=False)
 
         assert '<gazebo reference="base">' in xml
         assert "<mu1>0.8</mu1>" in xml
@@ -1032,7 +1149,9 @@ class TestURDFGenerator:
 
         pos_node = root.find(".//position_sensing")
         assert pos_node is not None
-        assert pos_node.find("vertical/stddev").text == "0.1"
+        stddev_node = pos_node.find("vertical/stddev")
+        assert stddev_node is not None
+        assert stddev_node.text == "0.1"
         assert pos_node.find("horizontal") is None
 
     def test_generate_gps_with_velocity_noise(self) -> None:
@@ -1053,8 +1172,12 @@ class TestURDFGenerator:
         vel_node = root.find(".//velocity_sensing")
         assert vel_node is not None
         # Velocity noise uses "noise" wrapper in _add_sensor_noise by default
-        assert vel_node.find("horizontal/noise/stddev").text == "0.1"
-        assert vel_node.find("vertical/noise/stddev").text == "0.2"
+        h_noise = vel_node.find("horizontal/noise/stddev")
+        assert h_noise is not None
+        assert h_noise.text == "0.1"
+        v_noise = vel_node.find("vertical/noise/stddev")
+        assert v_noise is not None
+        assert v_noise.text == "0.2"
 
     def test_generate_sensor_noise_mean_and_bias(self) -> None:
         """Test generating sensor noise with non-zero mean, bias mean and bias stddev."""
@@ -1063,12 +1186,15 @@ class TestURDFGenerator:
         root = ET.Element("parent")
         gen._add_sensor_noise(root, noise)
 
-        assert root.find("noise/mean").text == "0.01"
-        assert root.find("noise/bias_stddev").text == "0.005"
+        mean_node = root.find("noise/mean")
+        assert mean_node is not None
+        assert mean_node.text == "0.01"
+        bias_stddev_node = root.find("noise/bias_stddev")
+        assert bias_stddev_node is not None
+        assert bias_stddev_node.text == "0.005"
 
     def test_generate_explicit_ros2_control_with_params(self) -> None:
         """Test generating explicit ros2_control with joint interfaces and parameters."""
-        from linkforge_core.models.ros2_control import Ros2ControlJoint
 
         rc = Ros2Control(
             name="ctrl",
@@ -1085,8 +1211,8 @@ class TestURDFGenerator:
         )
         robot = Robot(
             name="r",
-            initial_links=[Link(name="base"), Link(name="l1")],
-            initial_joints=[
+            links=[Link(name="base"), Link(name="l1")],
+            joints=[
                 Joint(
                     name="j1",
                     parent="base",
@@ -1095,10 +1221,10 @@ class TestURDFGenerator:
                     axis=Vector3(1, 0, 0),
                 )
             ],
-            initial_ros2_controls=[rc],
+            ros2_controls=[rc],
         )
         gen = URDFGenerator()
-        xml = gen.generate(robot)
+        xml = gen.generate(robot, validate=False)
 
         assert "<plugin>plugin/name</plugin>" in xml
         assert '<param name="param1">val1</param>' in xml
@@ -1106,7 +1232,6 @@ class TestURDFGenerator:
 
     def test_generate_sensor_with_plugin(self) -> None:
         """Sensor with plugin."""
-        from linkforge_core.models.gazebo import GazeboPlugin
 
         p = GazeboPlugin(name="p", filename="f.so")
         sensor = Sensor(
@@ -1120,21 +1245,21 @@ class TestURDFGenerator:
         root = ET.Element("root")
         gen._add_sensor_element(root, sensor)
 
-        assert root.find(".//plugin").get("name") == "p"
+        plugin_node = root.find(".//plugin")
+        assert plugin_node is not None
+        assert plugin_node.get("name") == "p"
 
-
-class TestURDFGeneratorEdgeCoverage:
-    """Generator behavior for sensors, mimic joints, and disabled features."""
+    # Robustness and Edge Cases
 
     def test_generate_without_ros2_control(self) -> None:
         """Generator skips ros2_control when disabled."""
         robot = Robot(
             name="r",
-            initial_links=[Link(name="b"), Link(name="c")],
-            initial_joints=[Joint(name="j1", parent="b", child="c", type=JointType.FIXED)],
+            links=[Link(name="b"), Link(name="c")],
+            joints=[Joint(name="j1", parent="b", child="c", type=JointType.FIXED)],
         )
         gen = URDFGenerator(use_ros2_control=False)
-        result = gen.generate(robot)
+        result = gen.generate(robot, validate=False)
         assert "ros2_control" not in result
 
     def test_mimic_joint_with_default_multiplier_and_offset(self) -> None:
@@ -1165,7 +1290,7 @@ class TestURDFGeneratorEdgeCoverage:
         robot.add_joint(j_main)
         robot.add_joint(j_mimic)
         gen = URDFGenerator()
-        result = gen.generate(robot)
+        result = gen.generate(robot, validate=False)
         root = ET.fromstring(result)
         mimic = root.find(".//mimic")
         assert mimic is not None
@@ -1185,15 +1310,14 @@ class TestURDFGeneratorEdgeCoverage:
         )
         robot.add_sensor(sensor)
         gen = URDFGenerator()
-        result = gen.generate(robot)
+        result = gen.generate(robot, validate=False)
         assert "position_sensing" in result
         assert "vertical" in result
 
     def test_contact_sensor_with_empty_collision_skips_collision_element(self) -> None:
         """Contact sensor with empty collision string omits the collision child."""
-        from linkforge_core.models.sensor import ContactInfo
 
-        robot = Robot(name="r", initial_links=[Link(name="base")])
+        robot = Robot(name="r", links=[Link(name="base")])
         sensor = Sensor(
             name="ct",
             type=SensorType.CONTACT,
@@ -1202,14 +1326,13 @@ class TestURDFGeneratorEdgeCoverage:
         )
         robot.add_sensor(sensor)
         gen = URDFGenerator()
-        result = gen.generate(robot)
+        result = gen.generate(robot, validate=False)
         assert "ct" in result
 
     def test_force_torque_sensor_generates_output(self) -> None:
         """Force/torque sensor branch is exercised and produces XML output."""
-        from linkforge_core.models.sensor import ForceTorqueInfo
 
-        robot = Robot(name="r", initial_links=[Link(name="base")])
+        robot = Robot(name="r", links=[Link(name="base")])
         sensor = Sensor(
             name="ft",
             type=SensorType.FORCE_TORQUE,
@@ -1218,7 +1341,7 @@ class TestURDFGeneratorEdgeCoverage:
         )
         robot.add_sensor(sensor)
         gen = URDFGenerator()
-        result = gen.generate(robot)
+        result = gen.generate(robot, validate=False)
         assert "ft" in result
 
     def test_generate_robot_with_empty_sections(self) -> None:
@@ -1232,16 +1355,16 @@ class TestURDFGeneratorEdgeCoverage:
 
     def test_generate_collision_without_name(self) -> None:
         """Verify the generator correctly handles collisions that lack an explicit name."""
-        link = Link(name="l", initial_collisions=[Collision(geometry=Box(Vector3(1, 1, 1)))])
-        robot = Robot(name="r", initial_links=[link])
+        link = Link(name="l", collisions=[Collision(geometry=Box(Vector3(1, 1, 1)))])
+        robot = Robot(name="r", links=[link])
         gen = URDFGenerator()
-        xml = gen.generate(robot)
+        xml = gen.generate(robot, validate=False)
         assert "<collision>" in xml
         assert 'name="' not in xml.split("<collision>")[1].split(">")[0]
 
     def test_generate_joint_with_partial_calibration(self) -> None:
         """Verify the generator correctly renders partial joint calibration data."""
-        robot = Robot(name="r", initial_links=[Link(name="p"), Link(name="c")])
+        robot = Robot(name="r", links=[Link(name="p"), Link(name="c")])
         j1 = Joint(
             name="j1",
             type=JointType.FIXED,
@@ -1251,7 +1374,7 @@ class TestURDFGeneratorEdgeCoverage:
         )
         robot.add_joint(j1)
         gen = URDFGenerator()
-        xml = gen.generate(robot)
+        xml = gen.generate(robot, validate=False)
         assert 'falling="0.5"' in xml
         assert "rising" not in xml
 
@@ -1265,8 +1388,8 @@ class TestURDFGeneratorEdgeCoverage:
         )
         robot = Robot(
             name="r",
-            initial_links=[Link(name="base"), Link(name="l1")],
-            initial_joints=[
+            links=[Link(name="base"), Link(name="l1")],
+            joints=[
                 Joint(
                     name="j1",
                     parent="base",
@@ -1275,10 +1398,10 @@ class TestURDFGeneratorEdgeCoverage:
                     axis=Vector3(1, 0, 0),
                 )
             ],
-            initial_transmissions=[trans],
+            transmissions=[trans],
         )
         gen = URDFGenerator()
-        xml = gen.generate(robot)
+        xml = gen.generate(robot, validate=False)
         assert "<mechanicalReduction>" not in xml
         assert "<offset>" not in xml
 
@@ -1290,7 +1413,7 @@ class TestURDFGeneratorEdgeCoverage:
             link_name="base",
             imu_info=IMUInfo(angular_velocity_noise=SensorNoise(stddev=0.1)),
         )
-        robot = Robot(name="r", initial_links=[Link(name="base")], initial_sensors=[sensor])
+        robot = Robot(name="r", links=[Link(name="base")], sensors=[sensor])
         gen = URDFGenerator()
         xml = gen.generate(robot, validate=False)
         assert "<angular_velocity>" in xml
@@ -1304,7 +1427,7 @@ class TestURDFGeneratorEdgeCoverage:
             link_name="base",
             gps_info=GPSInfo(position_sensing_vertical_noise=SensorNoise(stddev=0.1)),
         )
-        robot = Robot(name="r", initial_links=[Link(name="base")], initial_sensors=[sensor])
+        robot = Robot(name="r", links=[Link(name="base")], sensors=[sensor])
         gen = URDFGenerator()
         xml = gen.generate(robot, validate=False)
         assert "<position_sensing>" in xml
@@ -1313,15 +1436,14 @@ class TestURDFGeneratorEdgeCoverage:
 
     def test_ros2_control_plugin_traversal(self) -> None:
         """Verify ROS2 control plugin detection logic handles multiple gazebo plugins."""
-        from linkforge_core.models.gazebo import GazeboPlugin
 
         p1 = GazeboPlugin(name="other", filename="o.so")
         p2 = GazeboPlugin(name="my_ros2_control", filename="r.so")
         gz = GazeboElement(plugins=[p1, p2])
         robot = Robot(
             name="r",
-            initial_links=[Link(name="base"), Link(name="l1")],
-            initial_joints=[
+            links=[Link(name="base"), Link(name="l1")],
+            joints=[
                 Joint(
                     name="j",
                     parent="base",
@@ -1330,24 +1452,28 @@ class TestURDFGeneratorEdgeCoverage:
                     axis=Vector3(1, 0, 0),
                 )
             ],
-            initial_gazebo_elements=[gz],
+            gazebo_elements=[gz],
         )
         gen = URDFGenerator(use_ros2_control=True)
         robot.add_transmission(
-            Transmission(name="t", joints=[TransmissionJoint(name="j")], type="Simple")
+            Transmission(
+                name="t",
+                joints=[TransmissionJoint(name="j")],
+                actuators=[TransmissionActuator(name="a")],
+                type="Simple",
+            )
         )
         xml = gen.generate(robot, validate=False)
         assert xml.count("libgz_ros2_control-system.so") == 0
 
     def test_generate_ros2_control_joint_parameters(self) -> None:
         """Verify generator handles custom parameters for ROS2 control joints."""
-        from linkforge_core.models.ros2_control import Ros2ControlJoint
 
         # Must have matching joint in robot model for auto-sync logic
         robot = Robot(
             name="r",
-            initial_links=[Link(name="base"), Link(name="l1")],
-            initial_joints=[
+            links=[Link(name="base"), Link(name="l1")],
+            joints=[
                 Joint(
                     name="j1",
                     parent="base",
@@ -1392,9 +1518,9 @@ class TestURDFGeneratorEdgeCoverage:
             # rising=None, falling=None is default
             calibration=JointCalibration(),
         )
-        robot = Robot(name="r", initial_links=[Link(name="a"), Link(name="b")], initial_joints=[j])
+        robot = Robot(name="r", links=[Link(name="a"), Link(name="b")], joints=[j])
         gen = URDFGenerator()
-        xml = gen.generate(robot)
+        xml = gen.generate(robot, validate=False)
         assert "<calibration" not in xml
 
     def test_generate_imu_sensor_with_linear_acceleration_noise_only(self) -> None:
@@ -1405,7 +1531,7 @@ class TestURDFGeneratorEdgeCoverage:
             link_name="base",
             imu_info=IMUInfo(linear_acceleration_noise=SensorNoise(stddev=0.1)),
         )
-        robot = Robot(name="r", initial_links=[Link(name="base")], initial_sensors=[sensor])
+        robot = Robot(name="r", links=[Link(name="base")], sensors=[sensor])
         gen = URDFGenerator()
         xml = gen.generate(robot, validate=False)
         assert "<angular_velocity>" not in xml
@@ -1422,7 +1548,7 @@ class TestURDFGeneratorEdgeCoverage:
                 position_sensing_vertical_noise=SensorNoise(stddev=0.2),
             ),
         )
-        robot = Robot(name="r", initial_links=[Link(name="base")], initial_sensors=[sensor])
+        robot = Robot(name="r", links=[Link(name="base")], sensors=[sensor])
         gen = URDFGenerator()
         xml = gen.generate(robot, validate=False)
         assert "<position_sensing>" in xml
@@ -1436,11 +1562,14 @@ class TestURDFGeneratorEdgeCoverage:
         j = Joint(
             name="j", type=JointType.CONTINUOUS, parent="base", child="child", axis=Vector3(1, 0, 0)
         )
-        robot = Robot(
-            name="r", initial_links=[Link(name="base"), Link(name="child")], initial_joints=[j]
-        )
+        robot = Robot(name="r", links=[Link(name="base"), Link(name="child")], joints=[j])
         robot.add_transmission(
-            Transmission(name="t", joints=[TransmissionJoint(name="j")], type="Simple")
+            Transmission(
+                name="t",
+                joints=[TransmissionJoint(name="j")],
+                actuators=[TransmissionActuator(name="a")],
+                type="Simple",
+            )
         )
         gen = URDFGenerator(use_ros2_control=True)
         xml = gen.generate(robot, validate=False)
@@ -1460,10 +1589,10 @@ class TestURDFGeneratorEdgeCoverage:
 
         # Python dataclasses don't enforce type constraints at runtime by default.
         # We just need an object that fails all isinstance checks in _add_geometry_element.
-        link = Link(name="l", initial_visuals=[Visual(geometry=UnknownGeometry())])  # type: ignore
-        robot = Robot(name="r", initial_links=[link])
+        link = Link(name="l", visuals=[Visual(geometry=UnknownGeometry())])  # type: ignore
+        robot = Robot(name="r", links=[link])
         gen = URDFGenerator()
-        xml = gen.generate(robot)
+        xml = gen.generate(robot, validate=False)
         # Should create <geometry> but no child element
         # Using a more flexible check for the tag presence
         assert "<geometry" in xml
@@ -1478,7 +1607,7 @@ class TestURDFGeneratorEdgeCoverage:
             link_name="base",
             gps_info=GPSInfo(velocity_sensing_horizontal_noise=SensorNoise(stddev=0.1)),
         )
-        robot = Robot(name="r", initial_links=[Link(name="base")], initial_sensors=[sensor])
+        robot = Robot(name="r", links=[Link(name="base")], sensors=[sensor])
         gen = URDFGenerator()
         xml = gen.generate(robot, validate=False)
         assert "<velocity_sensing>" in xml
@@ -1487,12 +1616,102 @@ class TestURDFGeneratorEdgeCoverage:
 
     def test_generate_sensor_without_info_block(self) -> None:
         """Verify sensor generation correctly skips info blocks when none are provided."""
-        # FORCE_TORQUE doesn't require info in Sensor.__post_init__
-        sensor = Sensor(name="s", type=SensorType.FORCE_TORQUE, link_name="base")
-        robot = Robot(name="r", initial_links=[Link(name="base")])
-        robot.add_sensor(sensor)
+        from unittest.mock import patch
 
-        gen = URDFGenerator()
-        xml = gen.generate(robot, validate=False)
-        assert '<sensor name="s" type="force_torque">' in xml
-        assert "<force_torque>" not in xml
+        with patch.object(Sensor, "__post_init__", return_value=None):
+            sensor = Sensor(name="s", type=SensorType.FORCE_TORQUE, link_name="base")
+            object.__setattr__(sensor, "force_torque_info", None)
+
+            robot = Robot(name="r", links=[Link(name="base")])
+            robot.add_sensor(sensor)
+
+            gen = URDFGenerator()
+            xml = gen.generate(robot, validate=False)
+            assert '<sensor name="s" type="force_torque">' in xml
+            assert "<force_torque>" not in xml
+
+    def test_urdf_generator_coverage_edge_cases(self) -> None:
+        """Verify remaining edge cases in URDFGenerator for 100% coverage."""
+        # 1. GazeboElement with reference=None, material, and custom properties
+        robot = Robot(name="gz_edge_cases")
+        link = Link(name="base")
+        robot.add_link(link)
+        robot.add_link(Link(name="child"))
+
+        gz = GazeboElement(reference=None, material="Gazebo/Blue")
+        gz.properties["custom_prop"] = "custom_val"
+        robot.add_gazebo_element(gz)
+
+        # 2. Joint with partial safety controller (some fields None)
+        safety = JointSafetyController(
+            soft_lower_limit=None,
+            soft_upper_limit=None,
+            k_position=None,
+            k_velocity=5.0,
+        )
+        joint_safety = Joint(
+            name="j_safety",
+            type=JointType.REVOLUTE,
+            parent="base",
+            child="child",
+            axis=Vector3(1.0, 0.0, 0.0),
+            limits=JointLimits(lower=-1.57, upper=1.57, effort=10, velocity=5),
+            safety_controller=safety,
+        )
+        robot.add_joint(joint_safety)
+
+        # 3. Transmission / Joint with custom hardware interface to trigger fallback in _normalize_interface_name
+        trans = Transmission(
+            name="custom_trans",
+            type="transmission_interface/SimpleTransmission",
+            joints=[
+                TransmissionJoint(
+                    name="j_safety",
+                    hardware_interfaces=["CustomHardwareInterface"],
+                )
+            ],
+            actuators=[TransmissionActuator(name="actuator1")],
+        )
+        robot.add_transmission(trans)
+
+        gen = URDFGenerator(pretty_print=False)
+        # Call generate with unused kwargs to cover line 125
+        xml = gen.generate(robot, validate=False, unused_opt=True)
+
+        # Direct call to _add_gazebo_element to cover lines 796, 802, 817-818 of _add_gazebo_element
+        root_temp = ET.Element("robot")
+        gz_full = GazeboElement(reference="base", material="Gazebo/Blue")
+        gz_full.properties["custom_prop"] = "custom_val"
+        gen._add_gazebo_element(root_temp, gz_full)
+
+        # Assertions on direct call
+        gz_direct = root_temp.find("gazebo")
+        assert gz_direct is not None
+        assert gz_direct.get("reference") == "base"
+        assert gz_direct.find("material").text == "Gazebo/Blue"
+        assert gz_direct.find("custom_prop").text == "custom_val"
+
+        # Assertions on generate() output
+        root = ET.fromstring(xml)
+
+        # Check GazeboElement with reference=None (should have no reference attribute)
+        gz_elem = next(g for g in root.findall("gazebo") if g.find("material") is not None)
+        assert gz_elem is not None
+        assert gz_elem.get("reference") is None
+        assert gz_elem.find("material").text == "Gazebo/Blue"
+        assert gz_elem.find("custom_prop").text == "custom_val"
+
+        # Check safety_controller with None values (they should be omitted)
+        safety_elem = root.find(".//safety_controller")
+        assert safety_elem is not None
+        assert safety_elem.get("soft_lower_limit") is None
+        assert safety_elem.get("soft_upper_limit") is None
+        assert safety_elem.get("k_position") is None
+        assert safety_elem.get("k_velocity") == "5"
+
+        # Check customized hardware interface normalized to position (fallback)
+        trans_elem = root.find("transmission")
+        assert trans_elem is not None
+        hw_iface = trans_elem.find("joint/hardwareInterface")
+        assert hw_iface is not None
+        assert hw_iface.text == "position"

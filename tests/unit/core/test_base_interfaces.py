@@ -1,13 +1,13 @@
 import pytest
-from linkforge_core.base import (
+from linkforge.core import (
     LinkForgeError,
+    Robot,
     RobotGenerator,
     RobotGeneratorError,
     RobotParser,
+    URDFParser,
     XacroDetectedError,
 )
-from linkforge_core.models.robot import Robot
-from linkforge_core.parsers.urdf_parser import URDFParser
 
 
 class TestStringGenerator(RobotGenerator[str]):
@@ -64,9 +64,9 @@ def test_binary_write_support(tmp_path) -> None:
 
 
 def test_robot_metadata_and_version() -> None:
-    robot = Robot(name="test_bot", version="2.0", metadata={"author": "Antigravity"})
+    robot = Robot(name="test_bot", version="2.0", metadata={"author": "LinkForge"})
     assert robot.version == "2.0"
-    assert robot.metadata["author"] == "Antigravity"
+    assert robot.metadata["author"] == "LinkForge"
 
 
 def test_custom_exception_wrapping(tmp_path) -> None:
@@ -120,15 +120,13 @@ def test_parser_detects_xacro_in_urdf() -> None:
 
 
 def test_xacro_parser_basic(tmp_path) -> None:
-    from linkforge_core.parsers.xacro_parser import XACROParser
-
     xacro_path = tmp_path / "robot.xacro"
     xacro_path.write_text(
         '<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="xacro_bot"><link name="base_link"/></robot>'
     )
 
-    parser = XACROParser()
-    robot = parser.parse(xacro_path)
+    parser = URDFParser()
+    robot = parser.parse_xacro(xacro_path)
 
     assert robot.name == "xacro_bot"
     assert any(link.name == "base_link" for link in robot.links)

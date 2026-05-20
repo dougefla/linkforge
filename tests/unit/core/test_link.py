@@ -3,10 +3,27 @@
 from __future__ import annotations
 
 import pytest
-from linkforge_core.exceptions import RobotModelError
-from linkforge_core.models.geometry import Box, Transform, Vector3
-from linkforge_core.models.link import Collision, Inertial, InertiaTensor, Link, Visual
-from linkforge_core.models.material import Color, Material
+from linkforge.core import (
+    Box,
+    Collision,
+    Color,
+    Inertial,
+    InertiaTensor,
+    Link,
+    LinkPhysics,
+    Material,
+    RobotModelError,
+    Transform,
+    Vector3,
+    Visual,
+)
+from linkforge.core.constants import (
+    DEFAULT_CONTACT_KD,
+    DEFAULT_CONTACT_KP,
+    DEFAULT_FRICTION_MU,
+    DEFAULT_GRAVITY,
+    DEFAULT_SELF_COLLIDE,
+)
 
 
 class TestInertiaTensor:
@@ -180,6 +197,18 @@ class TestVisual:
         visual = Visual(geometry=geom, name="my_visual")
         assert visual.name == "my_visual"
 
+    def test_prefix(self) -> None:
+        """Test creating a visual with a prefix."""
+        geom = Box(size=Vector3(1, 1, 1))
+        mat = Material(name="red", color=Color(1, 0, 0))
+        vis = Visual(name="vis", geometry=geom, material=mat)
+        vis_pre = vis.with_prefix("p_")
+        assert vis_pre.name == "p_vis"
+
+        material = vis_pre.material
+        assert material is not None
+        assert material.name == "p_red"
+
 
 class TestCollision:
     """Tests for Collision class."""
@@ -203,6 +232,42 @@ class TestCollision:
         collision = Collision(geometry=geom, name="my_collision")
         assert collision.name == "my_collision"
 
+    def test_prefix(self) -> None:
+        """Test creating a collision with a prefix."""
+        geom = Box(size=Vector3(1, 1, 1))
+        col = Collision(name="col", geometry=geom)
+        col_pre = col.with_prefix("p_")
+        assert col_pre.name == "p_col"
+
+
+class TestLinkPhysics:
+    """Tests for LinkPhysics class."""
+
+    def test_default_values(self) -> None:
+        """Test that default values are correctly assigned."""
+        physics = LinkPhysics()
+
+        assert physics.self_collide == DEFAULT_SELF_COLLIDE
+        assert physics.gravity == DEFAULT_GRAVITY
+        assert physics.mu == DEFAULT_FRICTION_MU
+        assert physics.kp == DEFAULT_CONTACT_KP
+        assert physics.kd == DEFAULT_CONTACT_KD
+
+    def test_custom_values(self) -> None:
+        """Test creating physics with custom values."""
+        physics = LinkPhysics(
+            self_collide=True,
+            gravity=False,
+            mu=0.5,
+            kp=1e6,
+            kd=10.0,
+        )
+        assert physics.self_collide is True
+        assert physics.gravity is False
+        assert physics.mu == 0.5
+        assert physics.kp == 1e6
+        assert physics.kd == 10.0
+
 
 class TestLink:
     """Tests for Link model."""
@@ -214,6 +279,7 @@ class TestLink:
         assert not link.visuals
         assert not link.collisions
         assert link.inertial is None
+        assert isinstance(link.physics, LinkPhysics)
 
     def test_empty_name(self) -> None:
         """Test that empty name raises error."""
@@ -239,14 +305,14 @@ class TestLink:
         """Test link with visual element."""
         geom = Box(size=Vector3(1.0, 1.0, 1.0))
         visual = Visual(geometry=geom)
-        link = Link(name="link1", initial_visuals=[visual])
+        link = Link(name="link1", visuals=[visual])
         assert link.visuals[0] == visual
 
     def test_link_with_collision(self) -> None:
         """Test link with collision element."""
         geom = Box(size=Vector3(1.0, 1.0, 1.0))
         collision = Collision(geometry=geom)
-        link = Link(name="link1", initial_collisions=[collision])
+        link = Link(name="link1", collisions=[collision])
         assert link.collisions[0] == collision
 
     def test_link_with_inertial(self) -> None:
@@ -279,8 +345,8 @@ class TestLink:
 
         link = Link(
             name="complete_link",
-            initial_visuals=[visual],
-            initial_collisions=[collision],
+            visuals=[visual],
+            collisions=[collision],
             inertial=inertial,
         )
 
@@ -289,3 +355,14 @@ class TestLink:
         assert link.collisions[0] == collision
         assert link.inertial == inertial
         assert link.mass == 5.0
+
+    def test_prefix(self) -> None:
+        """Test creating a link with a prefix."""
+        link = Link(name="base")
+        link.add_visual(Visual(name="v", geometry=Box(Vector3(1, 1, 1))))
+        link.add_collision(Collision(name="c", geometry=Box(Vector3(1, 1, 1))))
+
+        prefixed = link.with_prefix("r_")
+        assert prefixed.name == "r_base"
+        assert prefixed.visuals[0].name == "r_v"
+        assert prefixed.collisions[0].name == "r_c"

@@ -1,8 +1,7 @@
-from unittest.mock import patch
+from unittest.mock import PropertyMock, patch
 
 import pytest
-from linkforge_core.exceptions import RobotModelError
-from linkforge_core.models import (
+from linkforge.core import (
     CameraInfo,
     GazeboElement,
     Inertial,
@@ -13,13 +12,20 @@ from linkforge_core.models import (
     JointType,
     Link,
     Robot,
+    RobotModelError,
+    RobotValidationError,
+    RobotValidator,
     Ros2Control,
+    Ros2ControlJoint,
+    Sensor,
     SensorType,
+    Transmission,
+    TransmissionActuator,
+    TransmissionJoint,
+    TransmissionType,
+    ValidationErrorCode,
     Vector3,
 )
-from linkforge_core.models.sensor import Sensor
-from linkforge_core.models.transmission import Transmission, TransmissionJoint
-from linkforge_core.validation import RobotValidator
 
 
 class TestRobot:
@@ -37,7 +43,7 @@ class TestRobot:
             limits=JointLimits(lower=-1.0, upper=1.0, effort=10.0, velocity=1.0),
         )
 
-        robot = Robot(name="test_robot", initial_links=[base, link1], initial_joints=[joint1])
+        robot = Robot(name="test_robot", links=[base, link1], joints=[joint1])
 
         assert robot.name == "test_robot"
         assert len(robot.links) == 2
@@ -53,7 +59,7 @@ class TestRobot:
         with pytest.raises(RobotModelError):
             Robot(name="")
 
-        with pytest.raises(RobotModelError, match="Invalid characters"):
+        with pytest.raises(RobotModelError, match="Invalid name format"):
             Robot(name="invalid name with spaces")
 
     def test_duplicate_components(self) -> None:
@@ -61,17 +67,17 @@ class TestRobot:
         link1 = Link(name="link1")
         link2 = Link(name="link1")
 
-        with pytest.raises(RobotModelError, match="Already exists"):
-            Robot(name="test", initial_links=[link1, link2])
+        with pytest.raises(RobotModelError, match=".*Duplicate"):
+            Robot(name="test", links=[link1, link2])
 
         joint1 = Joint(name="joint1", parent="base", child="link1", type=JointType.FIXED)
         joint2 = Joint(name="joint1", parent="base", child="link1", type=JointType.FIXED)
 
-        with pytest.raises(RobotModelError, match="Already exists"):
+        with pytest.raises(RobotModelError, match=".*Duplicate"):
             Robot(
                 name="test",
-                initial_links=[Link(name="base"), Link(name="link1")],
-                initial_joints=[joint1, joint2],
+                links=[Link(name="base"), Link(name="link1")],
+                joints=[joint1, joint2],
             )
 
     def test_graph_operations(self) -> None:
@@ -92,15 +98,15 @@ class TestRobot:
         assert len(robot.joints) == 1
         assert robot.get_joint("joint1") is joint
 
-        with pytest.raises(RobotModelError, match="Already exists"):
+        with pytest.raises(RobotModelError, match=".*Duplicate"):
             robot.add_link(Link(name="base"))
 
-        with pytest.raises(RobotModelError, match="Already exists"):
+        with pytest.raises(RobotModelError, match=".*Duplicate"):
             robot.add_joint(
                 Joint(name="joint1", parent="base", child="child", type=JointType.FIXED)
             )
 
-        with pytest.raises(RobotModelError, match="Not found"):
+        with pytest.raises(RobotModelError, match=".*not found"):
             robot.add_joint(
                 Joint(name="j2", parent="base", child="missing_link", type=JointType.FIXED)
             )
@@ -114,11 +120,11 @@ class TestRobot:
             Joint(name="j3", parent="C", child="A", type=JointType.FIXED),
         ]
 
-        robot = Robot(name="cyclic_robot", initial_links=links, initial_joints=joints)
+        robot = Robot(name="cyclic_robot", links=links, joints=joints)
         result = RobotValidator().validate(robot)
 
         assert any("cycle" in e.message.lower() for e in result.errors)
-        assert robot._has_cycle() is True
+        assert robot.has_cycle is True
 
     def test_mimic_cycle_detection(self) -> None:
         """Test detection of circular mimic dependencies."""
@@ -143,7 +149,7 @@ class TestRobot:
             mimic=JointMimic(joint="j1"),
         )
 
-        robot = Robot(name="mimic_cycle", initial_links=links, initial_joints=[j1, j2])
+        robot = Robot(name="mimic_cycle", links=links, joints=[j1, j2])
         result = RobotValidator().validate(robot)
 
         assert any("Circular mimic dependency" in e.message for e in result.errors)
@@ -162,7 +168,7 @@ class TestRobot:
             mimic=JointMimic(joint="missing_joint"),
         )
 
-        robot = Robot(name="mimic_missing", initial_links=links, initial_joints=[j1])
+        robot = Robot(name="mimic_missing", links=links, joints=[j1])
         result = RobotValidator().validate(robot)
 
         assert any("mimics non-existent joint" in e.message for e in result.errors)
@@ -175,40 +181,40 @@ class TestRobot:
             Joint(name="j2", parent="mid", child="tip", type=JointType.FIXED),
         ]
 
-        robot = Robot(name="arm", initial_links=links, initial_joints=joints)
-        assert robot.get_root_link().name == "base"
+        robot = Robot(name="arm", links=links, joints=joints)
+        assert robot.root_link.name == "base"
 
         # Test validation error when no root exists (all links are children)
         j3 = Joint(name="j3", parent="mid", child="base", type=JointType.FIXED)
         robot_cycle = Robot(
             name="cyclic",
-            initial_links=[Link(name="base"), Link(name="mid")],
-            initial_joints=[j3, joints[0]],
+            links=[Link(name="base"), Link(name="mid")],
+            joints=[j3, joints[0]],
         )
 
         with pytest.raises(RobotModelError, match="No root link found"):
-            robot_cycle.get_root_link()
+            _ = robot_cycle.root_link
 
     def test_disconnected_component(self) -> None:
         """Test detection of disconnected parts of the graph."""
         links = [Link(name="root"), Link(name="connected"), Link(name="floating")]
         joints = [Joint(name="j1", parent="root", child="connected", type=JointType.FIXED)]
 
-        robot = Robot(name="disconnected", initial_links=links, initial_joints=joints)
+        robot = Robot(name="disconnected", links=links, joints=joints)
         result = RobotValidator().validate(robot)
 
         assert any("Multiple root links found" in e.message for e in result.errors)
 
     def test_add_sensor_validation(self) -> None:
         """Test validation when adding sensors."""
-        robot = Robot(name="test", initial_links=[Link(name="base")])
+        robot = Robot(name="test", links=[Link(name="base")])
         sensor = Sensor(
             name="cam1", link_name="base", type=SensorType.CAMERA, camera_info=CameraInfo()
         )
         robot.add_sensor(sensor)
         assert robot.sensors[0] == sensor
 
-        with pytest.raises(RobotModelError, match="cam2"):
+        with pytest.raises(RobotModelError, match=".*not found"):
             robot.add_sensor(
                 Sensor(
                     name="cam2",
@@ -218,7 +224,7 @@ class TestRobot:
                 )
             )
 
-        with pytest.raises(RobotModelError, match="Already exists"):
+        with pytest.raises(RobotModelError, match=".*Duplicate"):
             robot.add_sensor(
                 Sensor(
                     name="cam1", link_name="base", type=SensorType.CAMERA, camera_info=CameraInfo()
@@ -229,26 +235,56 @@ class TestRobot:
         """Test validation when adding transmissions."""
         robot = Robot(
             name="test",
-            initial_links=[Link(name="base"), Link(name="child")],
-            initial_joints=[Joint(name="j1", parent="base", child="child", type=JointType.FIXED)],
+            links=[Link(name="base"), Link(name="child")],
+            joints=[Joint(name="j1", parent="base", child="child", type=JointType.FIXED)],
         )
 
         trans = Transmission(
             name="t1",
-            type="SimpleTransmission",
+            type=TransmissionType.SIMPLE,
             joints=[TransmissionJoint(name="j1", hardware_interfaces=["position"])],
+            actuators=[TransmissionActuator(name="a1")],
         )
         robot.add_transmission(trans)
         assert robot.transmissions[0] == trans
 
         bad_trans = Transmission(
             name="t2",
-            type="SimpleTransmission",
+            type=TransmissionType.SIMPLE,
             joints=[TransmissionJoint(name="missing_joint", hardware_interfaces=["position"])],
+            actuators=[TransmissionActuator(name="a1")],
         )
 
-        with pytest.raises(RobotModelError, match="t2"):
+        with pytest.raises(RobotModelError):
             robot.add_transmission(bad_trans)
+
+    def test_add_group_all_branches(self) -> None:
+        """Test add_group with various truthy/falsy arguments to cover all branches."""
+        from linkforge.core import Chain
+
+        robot = Robot(
+            name="test",
+            links=[Link(name="base"), Link(name="child")],
+            joints=[Joint(name="j1", parent="base", child="child", type=JointType.FIXED)],
+        )
+
+        # 1. Links only
+        robot.add_group(name="g_links", links=["base"])
+        # 2. Joints only
+        robot.add_group(name="g_joints", joints=["j1"])
+        # 3. Chains only
+        robot.add_group(name="g_chains", chains=[Chain(base_link="base", tip_link="child")])
+        # 4. base_link and tip_link only
+        robot.add_group(name="g_base_tip", base_link="base", tip_link="child")
+
+        assert len(robot.semantic.groups) == 4
+
+        # 5. Missing elements validation
+        with pytest.raises(RobotModelError):
+            robot.add_group(name="bad", links=["missing"])
+
+        with pytest.raises(RobotModelError):
+            robot.add_group(name="bad", joints=["missing"])
 
     def test_robot_properties(self) -> None:
         """Test robot properties like mass and DOF."""
@@ -262,8 +298,6 @@ class TestRobot:
         )
         child = Link(name="child", inertial=inertial)
 
-        from linkforge_core.models import JointLimits
-
         # Revolute joint (1 DOF)
         j1 = Joint(
             name="j1",
@@ -274,7 +308,7 @@ class TestRobot:
             limits=JointLimits(lower=-1, upper=1),
         )
 
-        robot = Robot(name="test_props", initial_links=[base, child], initial_joints=[j1])
+        robot = Robot(name="test_props", links=[base, child], joints=[j1])
 
         assert robot.total_mass == 5.0
         assert robot.degrees_of_freedom == 1
@@ -295,7 +329,7 @@ class TestRobot:
 
     def test_add_gazebo_element(self) -> None:
         """Test adding Gazebo-specific elements."""
-        robot = Robot(name="test", initial_links=[Link(name="base")])
+        robot = Robot(name="test", links=[Link(name="base")])
 
         # Valid element without reference
         elem1 = GazeboElement(material="Gazebo/Blue")
@@ -308,7 +342,7 @@ class TestRobot:
         assert len(robot.gazebo_elements) == 2
 
         # Invalid reference
-        with pytest.raises(RobotModelError, match="No matching link or joint"):
+        with pytest.raises(RobotModelError):
             robot.add_gazebo_element(GazeboElement(reference="missing"))
 
     def test_add_ros2_control(self) -> None:
@@ -321,48 +355,55 @@ class TestRobot:
         assert len(robot.ros2_controls) == 1
 
         # Duplicate name check
-        with pytest.raises(RobotModelError, match="Already exists"):
+        with pytest.raises(RobotModelError, match=".*Duplicate"):
             robot.add_ros2_control(ros2_ctrl)
 
     def test_string_representation(self) -> None:
-        """Test __str__ method completeness."""
-        robot = Robot(name="full_bot", initial_links=[Link(name="base")])
+        """Test the simplified, lightweight __str__ method."""
+        robot = Robot(name="full_bot", links=[Link(name="base")])
+        s = str(robot)
 
-        # Basic
-        assert "Robot(name=full_bot" in str(robot)
-        assert "links=1" in str(robot)
+        assert "Robot(name=full_bot" in s
+        assert "links=1" in s
+        assert "joints=0" in s
+        assert "dof=0" in s
 
+        # Verify it doesn't contain heavy diagnostic info anymore
+        assert "sensors=" not in s
+        assert "root=" not in s
+
+    def test_robot_summary(self) -> None:
+        """Test the detailed architectural summary() method."""
+        robot = Robot(name="full_bot", links=[Link(name="base")])
+
+        # Add components to make the summary interesting
         robot.add_sensor(
             Sensor(name="cam", link_name="base", type=SensorType.CAMERA, camera_info=CameraInfo())
         )
 
-        # Fix: Transmission requires joints, and add_transmission checks existence
         j1 = Joint(name="j1", parent="base", child="l2", type=JointType.FIXED)
         l2 = Link(name="l2")
         robot.add_link(l2)
         robot.add_joint(j1)
 
-        trans = Transmission(
-            name="t1",
-            type="Simple",
-            joints=[TransmissionJoint(name="j1", hardware_interfaces=["position"])],
-        )
+        summary = robot.summary()
 
-        robot.add_transmission(trans)
+        assert "Robot Summary: full_bot" in summary
+        assert "Status: VALID" in summary
+        assert "Root: base" in summary
+        assert "Topology: 2 links, 1 joints" in summary
+        assert "Functional: 1 sensors" in summary
 
-        robot.add_ros2_control(
-            Ros2Control(name="ctrl", type="system", hardware_plugin="mock", joints=[])
-        )
-        robot.add_gazebo_element(GazeboElement(reference="base"))
+        # Test invalid state summary
+        # Add a cycle to make it invalid
+        j2 = Joint(name="j2", parent="l2", child="base", type=JointType.FIXED)
+        robot.joints = (*robot.joints, j2)  # Bypass adder validation for testing
+        robot._reindex()
 
-        s = str(robot)
-        assert "sensors=1" in s
-        assert "transmissions=1" in s
-        assert "ros2_controls=1" in s
+        invalid_summary = robot.summary()
+        assert "Status: INVALID" in invalid_summary
 
-
-class TestRobotCoverage:
-    """Additional tests to ensure 100% coverage of edge cases."""
+    # Edge Cases and Structural Validation
 
     def test_add_joint_parent_not_found(self) -> None:
         robot = Robot(name="test")
@@ -371,7 +412,7 @@ class TestRobotCoverage:
 
         # Parent "missing" does not exist
         j1 = Joint(name="j1", type=JointType.FIXED, parent="missing", child="l1")
-        with pytest.raises(RobotModelError, match="Not found"):
+        with pytest.raises(RobotModelError, match=".*not found"):
             robot.add_joint(j1)
 
     def test_add_joint_child_not_found(self) -> None:
@@ -381,7 +422,7 @@ class TestRobotCoverage:
 
         # Child "missing" does not exist
         j1 = Joint(name="j1", type=JointType.FIXED, parent="l1", child="missing")
-        with pytest.raises(RobotModelError, match="Not found"):
+        with pytest.raises(RobotModelError, match=".*not found"):
             robot.add_joint(j1)
 
     def test_get_joints_for_link(self) -> None:
@@ -416,23 +457,31 @@ class TestRobotCoverage:
         j1 = Joint(name="j1", type=JointType.FIXED, parent="l1", child="l2")
         robot.add_joint(j1)
 
-        t1 = Transmission(name="t1", type="SimpleTransmission", joints=[j1])
+        t1 = Transmission(
+            name="t1",
+            type=TransmissionType.SIMPLE,
+            joints=[TransmissionJoint(name=j1.name)],
+            actuators=[TransmissionActuator(name="a1")],
+        )
         robot.add_transmission(t1)
 
-        with pytest.raises(RobotModelError, match="Already exists"):
+        with pytest.raises(RobotModelError, match=".*Duplicate"):
             robot.add_transmission(t1)
 
-    def test_get_root_link_empty(self) -> None:
+    def test_root_link_empty(self) -> None:
         robot = Robot(name="test")
-        assert robot.get_root_link() is None
+
+        with pytest.raises(RobotValidationError) as exc:
+            _ = robot.root_link
+        assert exc.value.code == ValidationErrorCode.NO_ROOT
 
     def test_validate_tree_structure_duplicate_names_mock(self) -> None:
         # To test duplicate names logic in validate_tree_structure,
         # we need to bypass add_link/add_joint checks which prevent duplicates.
         robot = Robot(name="test")
         l1 = Link(name="l1")
-        robot._links.append(l1)
-        robot._links.append(l1)  # Duplicate!
+        robot.links = (*robot.links, l1)
+        robot.links = (*robot.links, l1)  # Duplicate!
 
         result = RobotValidator().validate(robot)
         assert any("Duplicate link name" in e.title for e in result.errors)
@@ -444,8 +493,8 @@ class TestRobotCoverage:
         robot.add_link(l2)
 
         j1 = Joint(name="j1", type=JointType.FIXED, parent="l1", child="l2")
-        robot._joints.append(j1)
-        robot._joints.append(j1)  # Duplicate!
+        robot.joints = (*robot.joints, j1)
+        robot.joints = (*robot.joints, j1)  # Duplicate!
 
         result = RobotValidator().validate(robot)
         assert any("Duplicate joint name" in e.title for e in result.errors)
@@ -457,18 +506,19 @@ class TestRobotCoverage:
         robot.add_link(l1)
 
         j1 = Joint(name="j1", type=JointType.FIXED, parent="l1", child="missing")
-        robot._joints.append(j1)
+        robot.joints = (*robot.joints, j1)
 
         result = RobotValidator().validate(robot)
         assert any("Missing child link" in e.title for e in result.errors)
 
     def test_validate_tree_structure_root_none_mock(self) -> None:
-        # Mock get_root_link to return None even if links exist
+        # Mock get_root_link to raise NO_ROOT error even if links exist
         robot = Robot(name="test")
         l1 = Link(name="l1")
         robot.add_link(l1)
 
-        with patch.object(robot, "get_root_link", return_value=None):
+        error = RobotValidationError(ValidationErrorCode.NO_ROOT, "No root link found")
+        with patch.object(Robot, "root_link", new_callable=PropertyMock, side_effect=error):
             result = RobotValidator().validate(robot)
             assert any("No root link found" in e.message for e in result.errors)
 
@@ -478,7 +528,10 @@ class TestRobotCoverage:
         robot.add_link(Link(name="l1"))
 
         with patch.object(
-            robot, "_has_cycle", side_effect=RobotModelError("Unexpected graph error")
+            Robot,
+            "has_cycle",
+            new_callable=PropertyMock,
+            side_effect=RobotModelError("Unexpected graph error"),
         ):
             result = RobotValidator().validate(robot)
             assert any("Kinematic graph error" in e.title for e in result.errors)
@@ -507,7 +560,7 @@ class TestRobotCoverage:
         robot.add_joint(j3)
 
         # Mock get_root_link up to return l1 (ignoring l2 as second root)
-        with patch.object(robot, "get_root_link", return_value=l1):
+        with patch.object(Robot, "root_link", new_callable=PropertyMock, return_value=l1):
             result = RobotValidator().validate(robot)
 
             # l2 is disconnected (count=0, != root)
@@ -520,9 +573,9 @@ class TestRobotCoverage:
         # Test a mimic chain that ends properly (hitting break)
 
         robot = Robot(name="test")
-        l1 = Link(name="l1")
-        l2 = Link(name="l2")
-        l3 = Link(name="l3")
+        l1 = Link(name="l1", inertial=Inertial(mass=1.0))
+        l2 = Link(name="l2", inertial=Inertial(mass=1.0))
+        l3 = Link(name="l3", inertial=Inertial(mass=1.0))
         robot.add_link(l1)
         robot.add_link(l2)
         robot.add_link(l3)
@@ -604,16 +657,319 @@ class TestRobotCoverage:
         assert isinstance(robot.ros2_controls, tuple)
         assert isinstance(robot.gazebo_elements, tuple)
 
-    def test_robot_duplicate_initial_components_gap_fill(self) -> None:
-        """Test detection of duplicate initial components in post-init."""
-        robot = Robot(name="test")
+    def test_robot_duplicate_components_gap_fill(self) -> None:
+        """Test detection of duplicate initial components during initialization."""
         link1 = Link(name="l1")
-        robot._links = [link1, link1]
-        with pytest.raises(RobotModelError, match="Duplicate found in index"):
-            robot.__post_init__(None, None)
+        # add_link inside __post_init__ will catch duplicates
+        with pytest.raises(RobotModelError, match=".*Duplicate"):
+            Robot(name="test", links=[link1, link1])
 
-        robot = Robot(name="test")
         joint1 = Joint(name="j1", parent="a", child="b", type=JointType.FIXED)
-        robot._joints = [joint1, joint1]
-        with pytest.raises(RobotModelError, match="Duplicate found in index"):
-            robot.__post_init__(None, None)
+        with pytest.raises(RobotModelError, match=".*Duplicate"):
+            Robot(
+                name="test",
+                links=[Link(name="a"), Link(name="b")],
+                joints=[joint1, joint1],
+            )
+
+    def test_sensor_accessors(self) -> None:
+        """Test the new sensor accessor methods (get_sensor, sensor, has_sensor)."""
+        robot = Robot(name="test", links=[Link(name="base")])
+        sensor = Sensor(
+            name="cam1", link_name="base", type=SensorType.CAMERA, camera_info=CameraInfo()
+        )
+        robot.add_sensor(sensor)
+
+        assert robot.has_sensor("cam1") is True
+        assert robot.has_sensor("missing") is False
+        assert robot.get_sensor("cam1") is sensor
+        assert robot.get_sensor("missing") is None
+        assert robot.sensor("cam1") is sensor
+        with pytest.raises(RobotModelError, match=".*not found"):
+            robot.sensor("missing")
+
+    def test_prefix_all_identity_sync(self) -> None:
+        """Test that prefix_all correctly namespaces the robot name and semantic data."""
+        robot = Robot(name="ur5", links=[Link(name="base")])
+        robot.prefix_all("left_")
+
+        assert robot.name == "left_ur5"
+        assert robot.links[0].name == "left_base"
+        assert robot.semantic.robot_name == "left_ur5"
+
+    def test_reindex_integrity(self) -> None:
+        """Test that _reindex correctly rebuilds maps after manual mutation."""
+        robot = Robot(name="test", links=[Link(name="base")])
+        sensor = Sensor(
+            name="s1", link_name="base", type=SensorType.CAMERA, camera_info=CameraInfo()
+        )
+        # Bypass add_sensor and verify reindex picks it up
+        robot.sensors = (*robot.sensors, sensor)
+        assert not robot.has_sensor("s1")
+        robot._reindex()
+        assert robot.has_sensor("s1")
+        assert robot.sensor("s1") is sensor
+
+    def test_traversal_helpers(self) -> None:
+        """Test the high-level kinematic traversal helper methods."""
+        # Setup: root -> j1 -> mid -> j2 -> tip
+        root = Link(name="root")
+        mid = Link(name="mid")
+        tip = Link(name="tip")
+        j1 = Joint(name="j1", parent="root", child="mid", type=JointType.FIXED)
+        j2 = Joint(name="j2", parent="mid", child="tip", type=JointType.FIXED)
+
+        robot = Robot(name="test", links=[root, mid, tip], joints=[j1, j2])
+
+        # Test Parent Joint lookups
+        assert robot.get_parent_joint("root") is None
+        assert robot.get_parent_joint("mid") == j1
+        assert robot.get_parent_joint("tip") == j2
+
+        # Test Child Joints lookups
+        assert robot.get_child_joints("root") == [j1]
+        assert robot.get_child_joints("mid") == [j2]
+        assert robot.get_child_joints("tip") == []
+
+        # Test Parent Link lookups
+        assert robot.get_parent_link("root") is None
+        assert robot.get_parent_link("mid") == root
+        assert robot.get_parent_link("tip") == mid
+
+        # Test Child Links lookups
+        assert robot.get_child_links("root") == [mid]
+        assert robot.get_child_links("mid") == [tip]
+        assert robot.get_child_links("tip") == []
+
+    def test_transmission_and_ros2_control_accessors(self) -> None:
+        """Test high-performance accessors for transmissions and ROS2 control."""
+        robot = Robot(name="test")
+
+        # Setup dependencies (links and joints)
+        robot.add_link(Link(name="link1"))
+        robot.add_link(Link(name="link2"))
+        # Add joints that will be referenced by transmission and ros2_control
+        robot.add_joint(
+            Joint(
+                name="joint1",
+                parent="link1",
+                child="link2",
+                type=JointType.REVOLUTE,
+                axis=Vector3(1, 0, 0),
+                limits=JointLimits(lower=-1.57, upper=1.57, effort=10.0, velocity=1.0),
+            )
+        )
+        robot.add_joint(Joint(name="joint2", parent="link2", child="link1", type=JointType.FIXED))
+
+        # Setup Transmission and Ros2Control
+
+        # Use valid simple transmission
+        trans = Transmission.create_simple(
+            name="trans1", joint_name="joint1", actuator_name="motor1"
+        )
+
+        # Use valid Ros2Control
+        rc = Ros2Control(name="ctrl1", hardware_plugin="fake_hardware", type="system")
+
+        robot.add_transmission(trans)
+        robot.add_ros2_control(rc)
+
+        # Test Accessors
+        assert robot.has_transmission("trans1") is True
+        assert robot.get_transmission("trans1") == trans
+        assert robot.transmission("trans1") == trans
+
+        assert robot.has_ros2_control("ctrl1") is True
+        assert robot.get_ros2_control("ctrl1") == rc
+        assert robot.ros2_control("ctrl1") == rc
+
+        # Test Non-existent
+        assert robot.has_transmission("ghost") is False
+        assert robot.get_transmission("ghost") is None
+        with pytest.raises(RobotValidationError, match=".*not found"):
+            robot.transmission("ghost")
+
+        # Test Duplicate Prevention
+        with pytest.raises(RobotValidationError, match=".*Duplicate transmission"):
+            robot.add_transmission(trans)
+
+        with pytest.raises(RobotValidationError, match=".*Duplicate ros2_control"):
+            robot.add_ros2_control(rc)
+
+        # Test Joint Existence Validation in ROS2 control
+
+        rc_invalid = Ros2Control(
+            name="invalid_ctrl",
+            hardware_plugin="fake",
+            joints=[Ros2ControlJoint(name="missing_joint", state_interfaces=["position"])],
+        )
+        with pytest.raises(RobotValidationError, match=".*Joint 'missing_joint'"):
+            robot.add_ros2_control(rc_invalid)
+
+    def test_gazebo_element_filtering(self) -> None:
+        """Test filtering Gazebo elements by reference."""
+        robot = Robot(name="test")
+        robot.add_link(Link(name="link1"))
+
+        ge1 = GazeboElement(reference="link1", material="Gazebo/Red")
+        ge2 = GazeboElement(reference="link1", material="Gazebo/Blue")
+        ge3 = GazeboElement(reference=None, static=True)
+
+        robot.add_gazebo_element(ge1)
+        robot.add_gazebo_element(ge2)
+        robot.add_gazebo_element(ge3)
+
+        # Test Global Retrieval
+        assert len(robot.get_gazebo_elements()) == 3
+
+        # Test Filtered Retrieval
+        link1_elements = robot.get_gazebo_elements("link1")
+        assert len(link1_elements) == 2
+        assert ge1 in link1_elements
+        assert ge2 in link1_elements
+
+        # Test Global Only (None reference)
+        global_elements = [ge for ge in robot.get_gazebo_elements() if ge.reference is None]
+        assert len(global_elements) == 1
+        assert global_elements[0] == ge3
+
+    def test_robot_normalization(self) -> None:
+        """Test robot normalized method sorts everything alphabetically."""
+        l2 = Link(name="l2")
+        l1 = Link(name="l1")
+        j2 = Joint(name="j2", parent="l1", child="l2", type=JointType.FIXED)
+        j1 = Joint(name="j1", parent="l1", child="l2", type=JointType.FIXED)
+        robot = Robot(name="test", links=[l2, l1], joints=[j2, j1])
+
+        # Verify it starts unsorted
+        assert robot.links[0].name == "l2"
+        assert robot.joints[0].name == "j2"
+
+        normalized = robot.normalized()
+        assert normalized.links[0].name == "l1"
+        assert normalized.links[1].name == "l2"
+        assert normalized.joints[0].name == "j1"
+        assert normalized.joints[1].name == "j2"
+
+    def test_robot_prefix_all_empty(self) -> None:
+        """Verify prefix_all returns early on empty prefix."""
+        robot = Robot(name="test", links=[Link(name="base")])
+        robot.prefix_all("")
+        assert robot.name == "test"
+
+    def test_robot_merge_link_not_found(self) -> None:
+        """Verify merge raises validation error if attachment link doesn't exist."""
+        robot = Robot(name="test", links=[Link(name="base")])
+        other = Robot(name="other", links=[Link(name="other_base")])
+        with pytest.raises(RobotValidationError) as exc:
+            robot.merge(other, at_link="non_existent", joint_name="j1")
+        assert exc.value.code == ValidationErrorCode.NOT_FOUND
+
+    def test_robot_link_and_joint_not_found_raises(self) -> None:
+        """Verify link and joint lookup throw errors if missing."""
+        robot = Robot(name="test", links=[Link(name="base")])
+        with pytest.raises(RobotValidationError) as exc:
+            robot.link("ghost")
+        assert exc.value.code == ValidationErrorCode.NOT_FOUND
+
+        with pytest.raises(RobotValidationError) as exc:
+            robot.joint("ghost")
+        assert exc.value.code == ValidationErrorCode.NOT_FOUND
+
+    def test_robot_update_ros2_control_new(self) -> None:
+        """Verify update_ros2_control adds control block if not already in index."""
+        robot = Robot(name="test")
+        rc = Ros2Control(name="ctrl", hardware_plugin="fake", type="system")
+        robot.update_ros2_control(rc)
+        assert robot.ros2_controls[0] == rc
+
+        # Test retrieve missing
+        with pytest.raises(RobotValidationError) as exc:
+            robot.ros2_control("missing_ctrl")
+        assert exc.value.code == ValidationErrorCode.NOT_FOUND
+
+    def test_robot_semantic_builders(self) -> None:
+        """Test semantic method chaining and builders."""
+        robot = Robot(name="test")
+        robot.add_link(Link(name="l1"))
+        robot.add_link(Link(name="l2"))
+        j1 = Joint(name="j1", parent="l1", child="l2", type=JointType.FIXED)
+        robot.add_joint(j1)
+
+        # 1. add_group
+        from linkforge.core import Chain
+
+        robot.add_group(
+            name="group1",
+            links=["l1", "l2"],
+            joints=["j1"],
+            chains=[Chain(base_link="l1", tip_link="l2")],
+            base_link="l1",
+            tip_link="l2",
+        )
+        assert len(robot.semantic.groups) == 1
+        assert robot.semantic.groups[0].name == "group1"
+
+        # 2. enable_collisions
+        robot.enable_collisions("l1", "l2", reason="adjacent")
+        assert len(robot.semantic.enabled_collisions) == 1
+        assert robot.semantic.enabled_collisions[0].reason == "adjacent"
+
+        # 3. disable_default_collisions
+        robot.disable_default_collisions("l1")
+        assert "l1" in robot.semantic.no_default_collision_links
+
+        # 4. add_joint_property
+        robot.add_joint_property("j1", "test_prop", "val")
+        assert len(robot.semantic.joint_properties) == 1
+        assert robot.semantic.joint_properties[0].property_name == "test_prop"
+
+        # 5. approximate_link_collision
+        from linkforge.core import SrdfSphere
+
+        robot.approximate_link_collision(
+            "l1", [SrdfSphere(center_x=0.0, center_y=0.0, center_z=0.0, radius=0.1)]
+        )
+        assert len(robot.semantic.link_sphere_approximations) == 1
+
+    def test_robot_summary_failures_and_additions(self) -> None:
+        """Test summary edge case failures and extra blocks."""
+        robot = Robot(name="test")
+        robot.add_link(Link(name="l1"))
+        robot.add_link(Link(name="l2"))
+        robot.add_joint(Joint(name="j1", parent="l1", child="l2", type=JointType.FIXED))
+        robot.add_ros2_control(Ros2Control(name="ctrl", hardware_plugin="fake", type="system"))
+        robot.add_gazebo_element(GazeboElement(material="Gazebo/Blue"))
+
+        # Verify extra details are in summary
+        s = robot.summary()
+        assert "ros2_control blocks" in s
+        assert "gazebo tags" in s
+
+        # Force summary exception by patching graph
+        with patch(
+            "linkforge.core.models.graph.KinematicGraph.get_root_links",
+            side_effect=ValueError("Graph fail"),
+        ):
+            summary = robot.summary()
+            assert "Status: INVALID" in summary
+            assert "Root: Unknown" in summary
+
+    def test_root_link_exists_in_graph_but_not_link_index(self) -> None:
+        """Verify validation error raises when root link is in graph but missing from index."""
+        robot = Robot(name="test")
+        robot.add_link(Link(name="base"))
+
+        # Patch get_link to return None for base, simulate missing from index
+        original_get_link = robot.get_link
+
+        def mock_get_link(name: str):
+            if name == "base":
+                return None
+            return original_get_link(name)
+
+        with patch.object(robot, "get_link", side_effect=mock_get_link):
+            with pytest.raises(RobotValidationError) as exc:
+                _ = robot.root_link
+            assert exc.value.code == ValidationErrorCode.NOT_FOUND
+            assert "exists in graph but not in link index" in str(exc.value)

@@ -4,9 +4,7 @@ Verifies graph theory logic for robot structure validation and traversal.
 """
 
 import pytest
-from linkforge_core.exceptions import RobotModelError
-from linkforge_core.models import Joint, JointType, Link
-from linkforge_core.models.graph import KinematicGraph
+from linkforge.core import Joint, JointType, KinematicGraph, Link, RobotModelError
 
 
 def test_graph_simple_chain() -> None:
@@ -20,7 +18,7 @@ def test_graph_simple_chain() -> None:
 
     assert not graph.has_cycle()
     assert graph.get_root_links() == ["A"]
-    assert graph.get_topological_order() == ["A", "B", "C"]
+    assert graph.get_topological_link_names() == ["A", "B", "C"]
     assert len(graph.find_islands()) == 1
 
 
@@ -36,7 +34,7 @@ def test_graph_cycle_detection() -> None:
 
     assert graph.has_cycle()
     with pytest.raises(RobotModelError, match="cycles"):
-        graph.get_topological_order()
+        graph.get_topological_link_names()
 
 
 def test_graph_invalid_joint_links() -> None:
@@ -90,7 +88,7 @@ def test_graph_branching() -> None:
 
     assert not graph.has_cycle()
     assert graph.get_root_links() == ["A"]
-    order = graph.get_topological_order()
+    order = graph.get_topological_link_names()
     assert order[0] == "A"
     assert set(order[1:]) == {"B", "C"}
 
@@ -100,11 +98,11 @@ def test_graph_empty_input() -> None:
     graph = KinematicGraph([], [])
     assert not graph.has_cycle()
     assert graph.get_root_links() == []
-    assert graph.get_topological_order() == []
+    assert graph.get_topological_link_names() == []
     assert graph.find_islands() == []
 
 
-def test_graph_diamond_dag_coverage() -> None:
+def test_graph_diamond_dag() -> None:
     """Verify diamond structure: A -> B, A -> C, B -> D, C -> D (no cycles)."""
     links = [Link(name="A"), Link(name="B"), Link(name="C"), Link(name="D")]
     joints = [
@@ -119,6 +117,36 @@ def test_graph_diamond_dag_coverage() -> None:
     assert not graph.has_cycle()
     assert graph.get_root_links() == ["A"]
 
-    # This hits the in_degree[child] != 0 branch in get_topological_order
-    order = graph.get_topological_order()
+    # This hits the in_degree[child] != 0 branch in get_topological_link_names
+    order = graph.get_topological_link_names()
     assert order == ["A", "B", "C", "D"]
+
+
+def test_graph_topological_joints_dag() -> None:
+    """Verify topological joints sorting with a diamond DAG, cyclic exceptions, and ghost joints."""
+    links = [Link(name="A"), Link(name="B"), Link(name="C"), Link(name="D")]
+    joints = [
+        Joint(name="j1", parent="A", child="B", type=JointType.FIXED),
+        Joint(name="j2", parent="A", child="C", type=JointType.FIXED),
+        Joint(name="j3", parent="B", child="D", type=JointType.FIXED),
+        Joint(name="j4", parent="C", child="D", type=JointType.FIXED),
+    ]
+    graph = KinematicGraph(links, joints)
+    top_joints = graph.get_topological_joints()
+    assert len(top_joints) == 4
+
+    # Test the cycle raises in get_topological_joints
+    cyclic_links = [Link(name="A"), Link(name="B")]
+    cyclic_joints = [
+        Joint(name="j1", parent="A", child="B", type=JointType.FIXED),
+        Joint(name="j2", parent="B", child="A", type=JointType.FIXED),
+    ]
+    cyclic_graph = KinematicGraph(cyclic_links, cyclic_joints)
+    with pytest.raises(RobotModelError, match="cycles"):
+        cyclic_graph.get_topological_joints()
+
+    # Test ghost joint (none return from registry)
+    graph.adj["A"].append(("B", "ghost_joint"))
+    top_joints_ghost = graph.get_topological_joints()
+    # The length of returned joints is still 4 because ghost_joint is filtered out by `if joint:`
+    assert len(top_joints_ghost) == 4

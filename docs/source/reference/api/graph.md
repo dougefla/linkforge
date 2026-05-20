@@ -2,13 +2,13 @@
 
 The `KinematicGraph` provides formal graph-theory logic for validating and
 traversing the link-joint structure of a robot. It is used internally by
-`RobotValidator` and `RobotAssembly`, but is also available for advanced users
+`RobotValidator` and `RobotBuilder`, but is also available for advanced users
 who need custom traversal or analysis logic.
 
 ## KinematicGraph
 
 ```{eval-rst}
-.. autoclass:: linkforge_core.models.graph.KinematicGraph
+.. autoclass:: linkforge.core.models.graph.KinematicGraph
    :members:
    :undoc-members:
    :show-inheritance:
@@ -21,16 +21,16 @@ who need custom traversal or analysis logic.
 ### Detect cycles in a robot
 
 ```python
-from linkforge_core.models.graph import KinematicGraph
-from linkforge_core.parsers import URDFParser
+from linkforge.core.models.graph import KinematicGraph
+from linkforge.core.parsers import URDFParser
 from pathlib import Path
 
 robot = URDFParser().parse(Path("my_robot.urdf"))
 graph = KinematicGraph(robot.links, robot.joints)
 
 try:
-    root = graph.root_link()
-    print(f"Root link: {root.name}")
+    roots = graph.get_root_links()
+    print(f"Root links found: {len(roots)}")
     print("No cycles detected.")
 except Exception as e:
     print(f"Topology error: {e}")
@@ -39,13 +39,17 @@ except Exception as e:
 ### Topological traversal
 
 ```python
-from linkforge_core.models.graph import KinematicGraph
+from linkforge.core.models.graph import KinematicGraph
 
 graph = KinematicGraph(robot.links, robot.joints)
 
-# Traverse links in depth-first order from the root
-for link in graph.topological_sort():
-    print(link.name)
+# 1. Get ordered link names (Strings)
+for link_name in graph.get_topological_link_names():
+    print(f"Processing link: {link_name}")
+
+# 2. Get ordered joint objects (Models)
+for joint in graph.get_topological_joints():
+    print(f"Configuring joint: {joint.name} ({joint.type.name})")
 ```
 
 :::{note}

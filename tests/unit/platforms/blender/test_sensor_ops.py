@@ -1,70 +1,125 @@
+"""Unit tests for Blender Sensor operators."""
+
+from __future__ import annotations
+
+from unittest.mock import patch
+
 import bpy
+from linkforge.blender.operators.sensor_ops import (
+    LINKFORGE_OT_create_sensor,
+    LINKFORGE_OT_delete_sensor,
+)
+
+from tests.blender_test_utils import (
+    create_robot_link,
+    create_test_object,
+    safe_get_sensor,
+)
 
 
-def test_sensor_ops_create_sensor() -> None:
-    """Test LINKFORGE_OT_create_sensor operator."""
-    # Setup: Create a link and a joint
-    bpy.ops.object.select_all(action="SELECT")
-    bpy.ops.object.delete()
+class TestSensorOperators:
+    def test_create_sensor_operator_poll(self, mocker, scene, blender_context) -> None:
+        """Test poll method of create sensor operator."""
+        assert bpy.context.view_layer is not None
+        op = LINKFORGE_OT_create_sensor
 
-    bpy.ops.mesh.primitive_cube_add()
-    bpy.ops.linkforge.create_link_from_mesh()
-    link_obj = bpy.context.active_object
+        # Active object is None
+        bpy.context.view_layer.objects.active = None
+        assert not op.poll(bpy.context)
 
-    bpy.ops.linkforge.create_joint()
+        # Active object exists but not selected
+        link = create_robot_link("base", scene)
+        link.select_set(False)
+        bpy.context.view_layer.objects.active = link
+        assert not op.poll(bpy.context)
 
-    # 1. Test Poll (should pass with link selected)
-    link_obj.select_set(True)
-    bpy.context.view_layer.objects.active = link_obj
-    assert bpy.ops.linkforge.create_sensor.poll() is True
+        # Selected and is link
+        link.select_set(True)
+        bpy.context.view_layer.objects.active = link
+        assert op.poll(bpy.context)
 
-    # 2. Test Execute
-    bpy.ops.linkforge.create_sensor()
+        # Selected and is child of a link
+        child = create_test_object("child_mesh", None, scene)
+        child.parent = link
+        child.select_set(True)
+        bpy.context.view_layer.objects.active = child
+        assert op.poll(bpy.context)
 
-    sensor_obj = bpy.context.active_object
-    assert "_sensor" in sensor_obj.name
-    assert sensor_obj.type == "EMPTY"
-    assert sensor_obj.linkforge_sensor.is_robot_sensor is True
-    assert sensor_obj.parent == link_obj
+    def test_create_sensor_operator_execute(self, mocker, scene, blender_context) -> None:
+        """Test execute method of create sensor operator."""
+        assert bpy.context.view_layer is not None
+        link = create_robot_link("base", scene)
+        bpy.context.view_layer.objects.active = link
 
+        op = LINKFORGE_OT_create_sensor()
+        res = op.execute(bpy.context)
+        assert res == {"FINISHED"}
 
-def test_sensor_ops_delete_sensor() -> None:
-    """Test LINKFORGE_OT_delete_sensor operator."""
-    bpy.ops.object.select_all(action="SELECT")
-    bpy.ops.object.delete()
+        # Find created sensor empty
+        sensor_obj = bpy.context.active_object
+        assert sensor_obj is not None
+        assert sensor_obj.name.startswith("base_sensor")
+        assert sensor_obj.parent == link
+        assert safe_get_sensor(sensor_obj).is_robot_sensor
+        assert safe_get_sensor(sensor_obj).attached_link == link
 
-    # Create sensor
-    bpy.ops.mesh.primitive_cube_add()
-    bpy.ops.linkforge.create_link_from_mesh()
-    bpy.ops.linkforge.create_sensor()
-    sensor_obj = bpy.context.active_object
-    sensor_name = sensor_obj.name
+    def test_create_sensor_operator_execute_child(self, mocker, scene, blender_context) -> None:
+        """Test execute method when active object is a child of a link."""
+        assert bpy.context.view_layer is not None
+        link = create_robot_link("base", scene)
+        child = create_test_object("child_mesh", None, scene)
+        child.parent = link
+        bpy.context.view_layer.objects.active = child
 
-    # 1. Test Poll
-    assert bpy.ops.linkforge.delete_sensor.poll() is True
+        op = LINKFORGE_OT_create_sensor()
+        res = op.execute(bpy.context)
+        assert res == {"FINISHED"}
 
-    # 2. Test Execute
-    bpy.ops.linkforge.delete_sensor()
-    assert sensor_name not in bpy.data.objects
+        sensor_obj = bpy.context.active_object
+        assert sensor_obj is not None
+        assert sensor_obj.parent == link
+        assert safe_get_sensor(sensor_obj).attached_link == link
 
+    def test_create_sensor_operator_fallback(self, mocker, scene, blender_context) -> None:
+        """Test execute fallback when preferences are missing."""
+        assert bpy.context.view_layer is not None
+        link = create_robot_link("base", scene)
+        bpy.context.view_layer.objects.active = link
 
-def test_sensor_ops_poll_failures() -> None:
-    """Hit poll failures for sensor operators."""
-    bpy.ops.object.select_all(action="SELECT")
-    bpy.ops.object.delete()
+        with patch("linkforge.blender.preferences.get_addon_prefs", return_value=None):
+            op = LINKFORGE_OT_create_sensor()
+            res = op.execute(bpy.context)
+            assert res == {"FINISHED"}
 
-    # 1. No active object
-    assert bpy.ops.linkforge.create_sensor.poll() is False
+    def test_delete_sensor_operator(self, mocker, scene, blender_context) -> None:
+        """Test delete sensor operator poll and execute."""
+        assert bpy.context.view_layer is not None
+        link = create_robot_link("base", scene)
+        sensor_obj = create_test_object("test_sensor", None, scene)
+        sensor_obj.parent = link
+        safe_get_sensor(sensor_obj).is_robot_sensor = True
 
-    # 2. Active but not a joint
-    bpy.ops.mesh.primitive_cube_add()
-    assert bpy.ops.linkforge.create_sensor.poll() is False
+        op = LINKFORGE_OT_delete_sensor
 
+        # Poll fails when active object is not selected
+        sensor_obj.select_set(False)
+        bpy.context.view_layer.objects.active = sensor_obj
+        assert not op.poll(bpy.context)
 
-def test_sensor_ops_main_entry(mocker) -> None:
-    """Simulate module main entry."""
-    from linkforge.blender.operators import sensor_ops
+        # Poll passes when selected
+        sensor_obj.select_set(True)
+        assert op.poll(bpy.context)
 
-    mock_reg = mocker.patch.object(sensor_ops, "register")
-    sensor_ops.register()
-    mock_reg.assert_called_once()
+        # Execute
+        res = op().execute(bpy.context)
+        assert res == {"FINISHED"}
+        assert sensor_obj.name not in scene.objects
+
+    def test_sensor_ops_invalid_context(self) -> None:
+        """Verify sensor operator handles invalid context gracefully."""
+        op = LINKFORGE_OT_create_sensor()
+
+        class MockContextNoScene:
+            scene = None
+
+        assert op.execute(MockContextNoScene()) == {"CANCELLED"}

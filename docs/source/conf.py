@@ -3,8 +3,6 @@
 # For the full list of built-in configuration values, see the documentation:
 # https://www.sphinx-doc.org/en/master/usage/configuration.html
 
-import os
-import sys
 import typing
 import warnings
 
@@ -12,13 +10,12 @@ import warnings
 # that break the build when Sphinx is run with the -W (warnings-as-errors) flag.
 warnings.filterwarnings("ignore", category=DeprecationWarning, module="sphinx_autodoc_typehints")
 
-sys.path.insert(0, os.path.abspath("../../core/src"))  # For linkforge_core
-sys.path.insert(0, os.path.abspath("../../platforms/blender"))  # For linkforge (blender)
+# sys.path is handled by the virtual environment (uv sync)
 
 # -- Project information -----------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
 
-from linkforge_core import __version__  # noqa: E402
+from linkforge.core import __version__  # noqa: E402
 
 project = "LinkForge"
 copyright = "2026, Arouna Patouossa Mounchili"  # noqa: A001
@@ -42,7 +39,7 @@ extensions = [
 
 templates_path = ["_templates"]
 exclude_patterns = ["examples"]
-suppress_warnings = ["autodoc.typehints"]
+suppress_warnings = ["autodoc.typehints", "ref.python"]
 
 # -- Options for HTML output -------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#options-for-html-output
@@ -51,7 +48,7 @@ html_theme = "sphinx_rtd_theme"
 html_static_path = ["_static", "../assets"]
 html_logo = "../assets/linkforge_logo.png"
 
-# -- Options for HTML output -------------------------------------------------
+# -- HTML Theme Options ------------------------------------------------------
 
 html_theme_options = {
     "collapse_navigation": False,
@@ -71,8 +68,8 @@ html_context = {
     "github_version": "main",
     "conf_py_path": "/docs/source/",
     "metatags": """
-        <meta property="og:title" content="LinkForge - The Linter & Bridge for Robotics" />
-        <meta property="og:description" content="A professional Blender extension for roboticists. Industrial-grade validation for URDF, XACRO, and beyond." />
+        <meta property="og:title" content="LinkForge - The LLVM for Robotics" />
+        <meta property="og:description" content="LinkForge is the LLVM for Robotics: a universal Intermediate Representation (IR) and Blender-based Digital Twin platform." />
         <meta property="og:image" content="https://linkforge.readthedocs.io/en/latest/_static/social_preview.png" />
         <meta name="twitter:card" content="summary_large_image" />
     """,
@@ -123,6 +120,20 @@ typehints_document_rtype = True
 intersphinx_mapping = {
     "python": ("https://docs.python.org/3", None),
 }
+
+# Resolve ambiguous cross-references for 'type' which is used across many models
+nitpick_ignore = [
+    ("py:obj", "type"),
+    ("py:attr", "type"),
+]
+
+# -- Quality checks & Warning resolution --------------------------------------
+
+# Resolve ambiguous cross-references for 'type' which is used across many models
+nitpick_ignore = [
+    ("py:obj", "type"),
+    ("py:attr", "type"),
+]
 
 # MyST parser settings
 myst_enable_extensions = [

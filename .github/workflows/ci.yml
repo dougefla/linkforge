@@ -29,7 +29,7 @@ jobs:
           enable-cache: true
 
       - name: Install just
-        uses: extractions/setup-just@v3
+        uses: taiki-e/install-action@just
 
       - name: Install dependencies
         run: just install
@@ -60,7 +60,7 @@ jobs:
           enable-cache: true
 
       - name: Install just
-        uses: extractions/setup-just@v3
+        uses: taiki-e/install-action@just
 
       - name: Install dependencies
         run: just install
@@ -70,16 +70,19 @@ jobs:
           cd docs
           uv run sphinx-build -b html -W source build/html
 
+      - name: Run Core & Logic Tests
+        run: just test-core test-unit-blender
+
       - name: Setup Blender
         id: setup-blender
         uses: ./.github/actions/setup-blender
         with:
           version: '4.2.0'
 
-      - name: Run tests
+      - name: Run Blender Integration Tests
         env:
           BLENDER_PATH: ${{ steps.setup-blender.outputs.blender-path }}
-        run: just test
+        run: just test-integration-blender
 
       - name: Build package
         if: github.ref == 'refs/heads/main' && github.event_name == 'push' && matrix.python-version == '3.12'
@@ -121,8 +124,13 @@ jobs:
           args: >-
             --verbose --no-progress
             --exclude ".*\.local"
+            --exclude "https://hynek.me/.*"
             --exclude "https://www.mec.ed.tum.de/en/iwb/.*"
+            --exclude "https://cmp.felk.cvut.cz/~peckama2/"
             --exclude "https://www.gnu.org/licenses/gpl-3.0"
+            --exclude "https://monorepo.tools/"
+            --exclude "https://www.conventionalcommits.org/"
+            --exclude "https://github.com/[^/]+$"
             --exclude-path "docs/source/.*[a-z0-9]$"
             README.md docs/
           fail: true

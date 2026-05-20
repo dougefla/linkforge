@@ -1,14 +1,22 @@
 [run]
 source =
-    linkforge_core
-    linkforge
+    linkforge.core
+    linkforge.blender
 branch = True
 parallel = True
 relative_files = True
 
 [paths]
 source =
-    core/src/linkforge_core
-    platforms/blender/linkforge
-    */linkforge_core
-    */linkforge
+    core/src/linkforge/core
+    platforms/blender/src/linkforge/blender
+    */linkforge/core
+    */linkforge/blender
+
+[report]
+exclude_lines =
+    pragma: no cover
+    if typing.TYPE_CHECKING:
+    if not typing.TYPE_CHECKING:
+    if TYPE_CHECKING:
+    \.\.\.

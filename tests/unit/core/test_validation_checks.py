@@ -1,15 +1,19 @@
-"""Targeted unit tests for individual ValidationCheck classes.
-
-These tests exercise each check in isolation by calling check.run() directly,
-independent of the full RobotValidator pipeline. This ensures that focused
-validation rules can be reused in different parts of the application.
-"""
+"""Unit tests for modular validation checks."""
 
 import pytest
-from linkforge_core.models.joint import Joint, JointLimits, JointMimic, JointType, Vector3
-from linkforge_core.models.link import Inertial, Link
-from linkforge_core.models.robot import Robot
-from linkforge_core.validation import (
+from linkforge.core import (
+    Joint,
+    JointMimic,
+    JointType,
+    Link,
+    Robot,
+    ValidationErrorCode,
+    Vector3,
+)
+from linkforge.core.io import read_srdf
+from linkforge.core.models.link import Inertial
+from linkforge.core.models.ros2_control import Ros2Control, Ros2ControlJoint
+from linkforge.core.validation.checks import (
     DuplicateNameCheck,
     GeometryCheck,
     HasLinksCheck,
@@ -17,342 +21,417 @@ from linkforge_core.validation import (
     MassPropertiesCheck,
     MimicChainCheck,
     Ros2ControlCheck,
+    SemanticCheck,
     TreeStructureCheck,
-    ValidationCheck,
 )
-from linkforge_core.validation.result import ValidationResult
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
+from linkforge.core.validation.result import ValidationResult
 
 
-def _make_result() -> ValidationResult:
-    return ValidationResult(robot_name="test")
+@pytest.fixture
+def empty_robot():
+    return Robot(name="test_robot")
 
 
-def _empty_robot() -> Robot:
-    return Robot(name="test")
+@pytest.fixture
+def result():
+    return ValidationResult()
 
 
-def _simple_robot() -> Robot:
-    """Two-link, one-joint valid robot."""
-    robot = Robot(name="simple")
-    robot.add_link(Link(name="base", inertial=Inertial(mass=1.0)))
-    robot.add_link(Link(name="link1", inertial=Inertial(mass=0.5)))
-    robot.add_joint(
+def test_has_links_check(empty_robot, result):
+    check = HasLinksCheck()
+    check.run(empty_robot, result)
+    assert not result.is_valid
+    assert result.errors[0].code == ValidationErrorCode.VALUE_EMPTY
+
+
+def test_duplicate_name_check(empty_robot, result):
+    # Link duplicates
+    empty_robot.links = (Link(name="link1"), Link(name="link1"))
+    check = DuplicateNameCheck()
+    check.run(empty_robot, result)
+    assert any(
+        err.code == ValidationErrorCode.DUPLICATE_NAME and "link" in err.message
+        for err in result.errors
+    )
+
+    # Joint duplicates (clear results first)
+    result.issues = []
+    empty_robot.links = (Link(name="base"), Link(name="l1"))
+    empty_robot.joints = (
+        Joint(name="j1", type=JointType.FIXED, parent="base", child="l1"),
+        Joint(name="j1", type=JointType.FIXED, parent="base", child="l1"),
+    )
+    check.run(empty_robot, result)
+    assert any(
+        err.code == ValidationErrorCode.DUPLICATE_NAME and "joint" in err.message
+        for err in result.errors
+    )
+
+
+def test_joint_reference_check(empty_robot, result):
+    # Missing child
+    empty_robot.add_link(Link(name="base"))
+    empty_robot.joints = (
+        Joint(name="j1", type=JointType.FIXED, parent="base", child="non_existent"),
+    )
+    check = JointReferenceCheck()
+    check.run(empty_robot, result)
+    assert any("child" in err.message.lower() for err in result.errors)
+
+    # Missing parent
+    result.issues = []
+    empty_robot.links = (Link(name="l1"),)
+    empty_robot.joints = (
+        Joint(name="j2", type=JointType.FIXED, parent="non_existent", child="l1"),
+    )
+    check.run(empty_robot, result)
+    assert any("parent" in err.message.lower() for err in result.errors)
+
+
+def test_tree_structure_check_cycle(empty_robot, result):
+    empty_robot.add_link(Link(name="l1"))
+    empty_robot.add_link(Link(name="l2"))
+    # Manual bypass to create cycle
+    empty_robot.joints = (
+        Joint(name="j1", type=JointType.FIXED, parent="l1", child="l2"),
+        Joint(name="j2", type=JointType.FIXED, parent="l2", child="l1"),
+    )
+
+    check = TreeStructureCheck()
+    check.run(empty_robot, result)
+    assert any(err.code == ValidationErrorCode.HAS_CYCLE for err in result.errors)
+
+
+def test_tree_structure_check_multiple_parents(empty_robot, result):
+    empty_robot.add_link(Link(name="base"))
+    empty_robot.add_link(Link(name="l1"))
+    empty_robot.add_link(Link(name="l2"))
+    # l1 has two parents: base and l2.
+    # We also connect l2 to base to ensure a single root exists,
+    # so that the connectivity check is triggered.
+    empty_robot.joints = (
+        Joint(name="j1", type=JointType.FIXED, parent="base", child="l1"),
+        Joint(name="j2", type=JointType.FIXED, parent="l2", child="l1"),
+        Joint(name="j3", type=JointType.FIXED, parent="base", child="l2"),
+    )
+    # Reindex to build indices for connectivity check
+    empty_robot._reindex()
+
+    check = TreeStructureCheck()
+    check.run(empty_robot, result)
+    # Now that there is a unique root (base), connectivity check runs and finds multiple parents for l1
+    assert any("Multiple parent joints" in err.title for err in result.errors)
+
+
+def test_tree_structure_check_disconnected(empty_robot, result):
+    empty_robot.add_link(Link(name="base"))
+    empty_robot.add_link(Link(name="island"))
+    empty_robot._reindex()
+
+    check = TreeStructureCheck()
+    check.run(empty_robot, result)
+    # Reports MULTIPLE_ROOTS because 'island' has no parent
+    assert any(err.code == ValidationErrorCode.MULTIPLE_ROOTS for err in result.errors)
+
+
+def test_mass_properties_check(empty_robot, result):
+    # Link with near-zero mass (PHYSICS_VIOLATION error)
+    link = Link(name="light", inertial=Inertial(mass=1e-12))
+    empty_robot.add_link(link)
+
+    # Link with missing inertia (should trigger warning)
+    link2 = Link(name="no_inertia", inertial=None)
+    empty_robot.add_link(link2)
+
+    # Link with low mass (Very low mass warning)
+    link3 = Link(name="low_mass_warn", inertial=Inertial(mass=0.005))
+    empty_robot.add_link(link3)
+
+    # Link with near-zero inertia (Critical low inertia error)
+    from linkforge.core.models.link import InertiaTensor
+
+    tiny_tensor = InertiaTensor(ixx=1e-12, ixy=0, ixz=0, iyy=1e-12, iyz=0, izz=1e-12)
+    link4 = Link(name="low_inertia", inertial=Inertial(mass=1.0, inertia=tiny_tensor))
+    empty_robot.add_link(link4)
+
+    check = MassPropertiesCheck()
+    check.run(empty_robot, result)
+    assert any(err.title == "Critical low mass" for err in result.errors)
+    assert any(err.title == "Critical low inertia" for err in result.errors)
+    assert any(warn.title == "Very low mass" for warn in result.warnings)
+    assert any(warn.title == "Missing inertia" for warn in result.warnings)
+
+
+def test_geometry_check_warnings(empty_robot, result):
+    empty_robot.add_link(Link(name="ghost"))
+
+    check = GeometryCheck()
+    check.run(empty_robot, result)
+    assert len(result.warnings) >= 2
+    assert "visual" in result.warnings[0].message
+    assert "collision" in result.warnings[1].message
+
+
+def test_ros2_control_check(empty_robot, result):
+    empty_robot.add_link(Link(name="base"))
+    # Bypass validation in add_ros2_control
+    empty_robot.ros2_controls = (
+        Ros2Control(
+            name="hw",
+            hardware_plugin="mock",
+            joints=(Ros2ControlJoint(name="ghost_joint", command_interfaces=("position",)),),
+        ),
+    )
+
+    check = Ros2ControlCheck()
+    check.run(empty_robot, result)
+    assert any(err.code == ValidationErrorCode.NOT_FOUND for err in result.errors)
+
+
+def test_mimic_chain_circular(empty_robot, result):
+    axis = Vector3(0, 0, 1)
+    # Initialize with mimic to avoid FrozenInstanceError
+    j1 = Joint(
+        name="j1",
+        type=JointType.CONTINUOUS,
+        parent="a",
+        child="b",
+        axis=axis,
+        mimic=JointMimic(joint="j2"),
+    )
+    j2 = Joint(
+        name="j2",
+        type=JointType.CONTINUOUS,
+        parent="b",
+        child="c",
+        axis=axis,
+        mimic=JointMimic(joint="j1"),
+    )
+    # Bypass validation in add_joint
+    empty_robot.joints = (j1, j2)
+
+    check = MimicChainCheck()
+    check.run(empty_robot, result)
+    assert any(err.code == ValidationErrorCode.HAS_CYCLE for err in result.errors)
+
+
+def test_semantic_check_subgroup_cycle(empty_robot, result):
+    # Create SRDF with circular subgroup dependencies
+    srdf_xml = """<?xml version="1.0" encoding="UTF-8"?>
+    <robot name="test">
+        <group name="g1">
+            <group name="g2"/>
+        </group>
+        <group name="g2">
+            <group name="g1"/>
+        </group>
+    </robot>
+    """
+    empty_robot.semantic = read_srdf(srdf_xml)
+
+    check = SemanticCheck()
+    check.run(empty_robot, result)
+    assert any("Circular subgroup dependency" in err.title for err in result.errors)
+
+
+def test_semantic_check_invalid_end_effector(empty_robot, result):
+    srdf_xml = """<?xml version="1.0" encoding="UTF-8"?>
+    <robot name="test">
+        <end_effector name="hand" group="non_existent" parent_link="base"/>
+    </robot>
+    """
+    empty_robot.add_link(Link(name="base"))
+    empty_robot.semantic = read_srdf(srdf_xml)
+
+    check = SemanticCheck()
+    check.run(empty_robot, result)
+    assert any("Invalid end effector group" in err.title for err in result.errors)
+
+
+def test_geometry_check_with_geom(empty_robot, result):
+    from linkforge.core import Collision, Visual
+    from linkforge.core.models.geometry import Box
+
+    geom = Box(size=Vector3(1, 1, 1))
+
+    link = Link(
+        name="l1",
+        visuals=[Visual(geometry=geom)],
+        collisions=[Collision(geometry=geom)],
+    )
+    empty_robot.add_link(link)
+    check = GeometryCheck()
+    check.run(empty_robot, result)
+    assert not result.has_warnings
+
+
+def test_ros2_control_check_valid_joint(empty_robot, result):
+    empty_robot.add_link(Link(name="base"))
+    empty_robot.add_link(Link(name="l1"))
+    empty_robot.add_joint(Joint(name="j1", type=JointType.FIXED, parent="base", child="l1"))
+    empty_robot.ros2_controls = (
+        Ros2Control(
+            name="hw",
+            hardware_plugin="mock",
+            joints=(Ros2ControlJoint(name="j1", command_interfaces=("position",)),),
+        ),
+    )
+    check = Ros2ControlCheck()
+    check.run(empty_robot, result)
+    assert result.is_valid
+
+
+def test_mimic_chain_valid(empty_robot, result):
+    empty_robot.add_link(Link(name="base"))
+    empty_robot.add_link(Link(name="l1"))
+    empty_robot.add_link(Link(name="l2"))
+    axis = Vector3(0, 0, 1)
+    empty_robot.add_joint(
+        Joint(name="j1", type=JointType.CONTINUOUS, parent="base", child="l1", axis=axis)
+    )
+    empty_robot.add_joint(
         Joint(
-            name="j1",
-            type=JointType.REVOLUTE,
-            parent="base",
-            child="link1",
-            axis=Vector3(1.0, 0.0, 0.0),
-            limits=JointLimits(lower=-1.57, upper=1.57, effort=10.0, velocity=1.0),
+            name="j2",
+            type=JointType.CONTINUOUS,
+            parent="l1",
+            child="l2",
+            axis=axis,
+            mimic=JointMimic(joint="j1"),
         )
     )
-    return robot
+    check = MimicChainCheck()
+    check.run(empty_robot, result)
+    assert result.is_valid
 
 
-# ---------------------------------------------------------------------------
-# ValidationCheck ABC
-# ---------------------------------------------------------------------------
+def test_semantic_check_comprehensive(empty_robot, result) -> None:
+    srdf_xml = """<?xml version="1.0" encoding="UTF-8"?>
+    <robot name="test">
+        <group name="g1">
+            <link name="non_existent_link"/>
+            <joint name="non_existent_joint"/>
+            <group name="non_existent_subgroup"/>
+        </group>
+        <group_state name="s1" group="non_existent_group"/>
+        <end_effector name="ee1" group="g1" parent_link="non_existent_link" parent_group="non_existent_parent_group"/>
+        <passive_joint name="non_existent_passive"/>
+    </robot>
+    """
+    empty_robot.semantic = read_srdf(srdf_xml)
+    check = SemanticCheck()
+    check.run(empty_robot, result)
+
+    assert any("Invalid planning group link" in err.title for err in result.errors)
+    assert any("Invalid planning group joint" in err.title for err in result.errors)
+    assert any("Invalid group state reference" in err.title for err in result.errors)
+    assert any("Invalid end effector parent link" in err.title for err in result.errors)
+    assert any("Invalid end effector parent group" in err.title for err in result.errors)
+    assert any("Invalid passive joint" in err.title for err in result.errors)
+    assert any("Invalid subgroup reference" in err.title for err in result.errors)
 
 
-class TestValidationCheckABC:
-    def test_is_abstract(self) -> None:
-        """ValidationCheck cannot be instantiated directly."""
-        with pytest.raises(TypeError):
-            ValidationCheck()  # type: ignore[abstract]
+def test_semantic_check_dfs_not_found(result) -> None:
+    from linkforge.core.models.srdf import PlanningGroup
 
-    def test_concrete_check_is_instance(self) -> None:
-        assert isinstance(HasLinksCheck(), ValidationCheck)
-
-
-# ---------------------------------------------------------------------------
-# HasLinksCheck
-# ---------------------------------------------------------------------------
+    check = SemanticCheck()
+    group = PlanningGroup(name="ghost", links=("link1",))
+    # This directly triggers "if not current_group: return False"
+    check._check_subgroup_cycles(group, [], result)
+    assert not result.errors
 
 
-class TestHasLinksCheck:
-    def test_no_links_produces_error(self) -> None:
-        robot = _empty_robot()
-        result = _make_result()
-        HasLinksCheck().run(robot, result)
-        assert not result.is_valid
-        assert result.errors[0].title == "No links"
-
-    def test_with_links_passes(self) -> None:
-        robot = _empty_robot()
-        robot.add_link(Link(name="base"))
-        result = _make_result()
-        HasLinksCheck().run(robot, result)
-        assert result.is_valid
+def test_tree_structure_check_connectivity_disconnected(empty_robot, result, mocker):
+    empty_robot.add_link(Link(name="base"))
+    empty_robot.add_link(Link(name="island"))
+    mocker.patch.object(Robot, "root_link", return_value=empty_robot.links[0])
+    check = TreeStructureCheck()
+    check.run(empty_robot, result)
+    assert any("Disconnected link" in err.title for err in result.errors)
 
 
-# ---------------------------------------------------------------------------
-# DuplicateNameCheck
-# ---------------------------------------------------------------------------
+def test_tree_structure_check_exceptions(empty_robot, result, mocker):
+    from linkforge.core import RobotModelError, RobotValidationError
+    from linkforge.core.models.graph import KinematicGraph
+
+    # 1. TreeStructureCheck on robot without links (line 140)
+    check = TreeStructureCheck()
+    check.run(empty_robot, result)
+    assert not result.errors  # already reported by HasLinksCheck
+
+    # Add a link so subsequent checks can run
+    empty_robot.add_link(Link(name="base"))
+
+    # 2. robot.has_cycle raises RobotModelError (lines 160-165)
+    mocker.patch.object(
+        KinematicGraph, "has_cycle", side_effect=RobotModelError("mocked cycle error")
+    )
+
+    check.run(empty_robot, result)
+    assert any("Kinematic graph error" in err.title for err in result.errors)
+
+    # 2b. robot.has_cycle raises RobotModelError and has_ref_errors is True
+    result.issues = []
+    result.add_error(
+        title="Missing parent link", message="some msg", code=ValidationErrorCode.NOT_FOUND
+    )
+    check.run(empty_robot, result)
+    assert not any("Kinematic graph error" in err.title for err in result.errors)
+
+    # 3. robot.root_link raises unexpected RobotValidationError (line 196)
+    result.issues = []
+    mocker.patch.object(
+        Robot,
+        "get_root_link",
+        side_effect=RobotValidationError(
+            ValidationErrorCode.INVALID_VALUE, "mocked root validation error"
+        ),
+    )
+    check.run(empty_robot, result)
+    assert any("Root link error" in err.title for err in result.errors)
+
+    # 4. robot.root_link raises RobotModelError (lines 202-208)
+    result.issues = []
+    mocker.patch.object(
+        Robot, "get_root_link", side_effect=RobotModelError("mocked root model error")
+    )
+    check.run(empty_robot, result)
+    assert any("Kinematic error" in err.title for err in result.errors)
 
 
-class TestDuplicateNameCheck:
-    def test_duplicate_link_names(self) -> None:
-        robot = _empty_robot()
-        robot._links.append(Link(name="dup", inertial=Inertial(mass=1.0)))
-        robot._links.append(Link(name="dup", inertial=Inertial(mass=1.0)))
-        result = _make_result()
-        DuplicateNameCheck().run(robot, result)
-        errors = [e for e in result.errors if e.title == "Duplicate link name"]
-        assert len(errors) == 1
-        assert "dup" in errors[0].message
-
-    def test_duplicate_joint_names(self) -> None:
-        robot = _simple_robot()
-        robot.add_link(Link(name="link2", inertial=Inertial(mass=0.5)))
-        robot._joints.append(Joint(name="j1", type=JointType.FIXED, parent="base", child="link2"))
-        result = _make_result()
-        DuplicateNameCheck().run(robot, result)
-        errors = [e for e in result.errors if e.title == "Duplicate joint name"]
-        assert len(errors) == 1
-
-    def test_unique_names_pass(self) -> None:
-        result = _make_result()
-        DuplicateNameCheck().run(_simple_robot(), result)
-        assert result.is_valid
+def test_semantic_check_no_semantic(empty_robot, result):
+    empty_robot.semantic = None
+    check = SemanticCheck()
+    check.run(empty_robot, result)
+    assert not result.errors
 
 
-# ---------------------------------------------------------------------------
-# JointReferenceCheck
-# ---------------------------------------------------------------------------
-
-
-class TestJointReferenceCheck:
-    def test_missing_parent(self) -> None:
-        robot = _empty_robot()
-        robot.add_link(Link(name="link1"))
-        robot._joints.append(Joint(name="j1", type=JointType.FIXED, parent="ghost", child="link1"))
-        result = _make_result()
-        JointReferenceCheck().run(robot, result)
-        assert any(e.title == "Missing parent link" for e in result.errors)
-
-    def test_missing_child(self) -> None:
-        robot = _empty_robot()
-        robot.add_link(Link(name="base"))
-        robot._joints.append(Joint(name="j1", type=JointType.FIXED, parent="base", child="ghost"))
-        result = _make_result()
-        JointReferenceCheck().run(robot, result)
-        assert any(e.title == "Missing child link" for e in result.errors)
-
-    def test_valid_references_pass(self) -> None:
-        result = _make_result()
-        JointReferenceCheck().run(_simple_robot(), result)
-        assert result.is_valid
-
-
-# ---------------------------------------------------------------------------
-# TreeStructureCheck
-# ---------------------------------------------------------------------------
-
-
-class TestTreeStructureCheck:
-    def test_skips_when_no_links(self) -> None:
-        result = _make_result()
-        TreeStructureCheck().run(_empty_robot(), result)
-        assert result.is_valid  # HasLinksCheck responsibility
-
-    def test_cycle_detection(self) -> None:
-        robot = _empty_robot()
-        robot.add_link(Link(name="a"))
-        robot.add_link(Link(name="b"))
-        robot._joints.append(Joint(name="j1", type=JointType.FIXED, parent="a", child="b"))
-        robot._joints.append(Joint(name="j2", type=JointType.FIXED, parent="b", child="a"))
-        result = _make_result()
-        TreeStructureCheck().run(robot, result)
-        assert not result.is_valid
-
-    def test_disconnected_link_via_mock(self) -> None:
-        from unittest.mock import patch
-
-        robot = _empty_robot()
-        base = Link(name="base", inertial=Inertial(mass=1.0))
-        disc = Link(name="disc", inertial=Inertial(mass=1.0))
-        robot.add_link(base)
-        robot.add_link(disc)
-        # Mock get_root_link so TreeStructureCheck sees 'base' as root
-        # while 'disc' has no parent joint → triggers "Disconnected link"
-        with patch.object(robot, "get_root_link", return_value=base):
-            result = _make_result()
-            TreeStructureCheck().run(robot, result)
-        assert any(e.title == "Disconnected link" for e in result.errors)
-
-    def test_valid_tree_passes(self) -> None:
-        result = _make_result()
-        TreeStructureCheck().run(_simple_robot(), result)
-        assert result.is_valid
-
-
-# ---------------------------------------------------------------------------
-# MassPropertiesCheck
-# ---------------------------------------------------------------------------
-
-
-class TestMassPropertiesCheck:
-    def test_very_low_mass_warning(self) -> None:
-        robot = _empty_robot()
-        robot.add_link(Link(name="base", inertial=Inertial(mass=0.001)))
-        result = _make_result()
-        MassPropertiesCheck().run(robot, result)
-        assert result.is_valid
-        assert any(w.title == "Very low mass" for w in result.warnings)
-
-    def test_missing_inertia_warning(self) -> None:
-        robot = _empty_robot()
-        robot.add_link(Link(name="base", inertial=None))
-        result = _make_result()
-        MassPropertiesCheck().run(robot, result)
-        assert result.is_valid
-        assert any(w.title == "Missing inertia" for w in result.warnings)
-
-    def test_healthy_link_no_warnings(self) -> None:
-        robot = _empty_robot()
-        robot.add_link(Link(name="base", inertial=Inertial(mass=1.0)))
-        result = _make_result()
-        MassPropertiesCheck().run(robot, result)
-        assert not result.has_warnings
-
-
-# ---------------------------------------------------------------------------
-# GeometryCheck
-# ---------------------------------------------------------------------------
-
-
-class TestGeometryCheck:
-    def test_no_visual_or_collision_warnings(self) -> None:
-        robot = _empty_robot()
-        robot.add_link(Link(name="base", inertial=Inertial(mass=1.0)))
-        result = _make_result()
-        GeometryCheck().run(robot, result)
-        titles = {w.title for w in result.warnings}
-        assert "No visual geometry" in titles
-        assert "No collision geometry" in titles
-
-
-# ---------------------------------------------------------------------------
-# Ros2ControlCheck
-# ---------------------------------------------------------------------------
-
-
-class TestRos2ControlCheck:
-    def test_skips_when_no_ros2_controls(self) -> None:
-        result = _make_result()
-        Ros2ControlCheck().run(_simple_robot(), result)
-        assert result.is_valid
-
-    def test_invalid_control_joint_reference(self) -> None:
-        from linkforge_core.models.ros2_control import Ros2Control, Ros2ControlJoint
-
-        robot = _simple_robot()
-        control = Ros2Control(
-            name="ctrl",
-            type="system",
-            hardware_plugin="mock_hw/MockSystem",
-            joints=[
-                Ros2ControlJoint(
-                    name="ghost_joint",
-                    command_interfaces=["position"],
-                )
-            ],
+def test_mimic_chain_check_non_existent_mimic(empty_robot, result):
+    empty_robot.add_link(Link(name="base"))
+    empty_robot.add_link(Link(name="l1"))
+    empty_robot.add_joint(
+        Joint(
+            name="j1",
+            type=JointType.CONTINUOUS,
+            parent="base",
+            child="l1",
+            axis=Vector3(0, 0, 1),
+            mimic=JointMimic(joint="ghost"),
         )
-        robot.add_ros2_control(control)
-        result = _make_result()
-        Ros2ControlCheck().run(robot, result)
-        assert any(e.title == "Invalid ros2_control joint" for e in result.errors)
+    )
+    check = MimicChainCheck()
+    check.run(empty_robot, result)
+    assert any("Invalid mimic target" in err.title for err in result.errors)
 
 
-# ---------------------------------------------------------------------------
-# MimicChainCheck
-# ---------------------------------------------------------------------------
+def test_robot_validator_integration(empty_robot):
+    # Just ensure it runs without crashing and collects issues
+    empty_robot.add_link(Link(name="base", inertial=Inertial(mass=1.0)))
+    # Trigger a warning (no visual/collision)
+    from linkforge.core.io import validate_robot
 
-
-class TestMimicChainCheck:
-    def test_invalid_mimic_target(self) -> None:
-        robot = _simple_robot()
-        robot._joints.append(
-            Joint(
-                name="mimic_j",
-                type=JointType.REVOLUTE,
-                parent="base",
-                child="link1",
-                axis=Vector3(1.0, 0.0, 0.0),
-                limits=JointLimits(lower=-1.57, upper=1.57, effort=10.0, velocity=1.0),
-                mimic=JointMimic(joint="nonexistent"),
-            )
-        )
-        result = _make_result()
-        MimicChainCheck().run(robot, result)
-        assert any(e.title == "Invalid mimic target" for e in result.errors)
-
-    def test_circular_mimic_chain(self) -> None:
-        from linkforge_core.models.link import Inertial
-
-        robot = Robot(name="mimic_cycle")
-        robot.add_link(Link(name="base", inertial=Inertial(mass=1.0)))
-        robot.add_link(Link(name="a", inertial=Inertial(mass=0.5)))
-        robot.add_link(Link(name="b", inertial=Inertial(mass=0.5)))
-
-        robot._joints.append(
-            Joint(
-                name="ja",
-                type=JointType.REVOLUTE,
-                parent="base",
-                child="a",
-                axis=Vector3(1.0, 0.0, 0.0),
-                limits=JointLimits(lower=-1.57, upper=1.57, effort=10.0, velocity=1.0),
-                mimic=JointMimic(joint="jb"),
-            )
-        )
-        robot._joints.append(
-            Joint(
-                name="jb",
-                type=JointType.REVOLUTE,
-                parent="a",
-                child="b",
-                axis=Vector3(1.0, 0.0, 0.0),
-                limits=JointLimits(lower=-1.57, upper=1.57, effort=10.0, velocity=1.0),
-                mimic=JointMimic(joint="ja"),
-            )
-        )
-        result = _make_result()
-        MimicChainCheck().run(robot, result)
-        assert any(e.title == "Circular mimic dependency" for e in result.errors)
-
-    def test_no_mimic_passes(self) -> None:
-        result = _make_result()
-        MimicChainCheck().run(_simple_robot(), result)
-        assert result.is_valid
-
-
-# ---------------------------------------------------------------------------
-# RobotValidator custom registry
-# ---------------------------------------------------------------------------
-
-
-class TestRobotValidatorRegistry:
-    def test_custom_checks_only_runs_those_checks(self) -> None:
-        """Passing a custom check list runs only those checks, not all defaults."""
-        from linkforge_core.validation import RobotValidator
-
-        # Robot with no links AND low mass — only HasLinksCheck should fire
-        robot = _empty_robot()
-        result = RobotValidator(checks=[HasLinksCheck()]).validate(robot)
-        assert not result.is_valid
-        assert len(result.errors) == 1
-        assert result.errors[0].title == "No links"
-        # No warnings from MassPropertiesCheck or GeometryCheck
-        assert not result.has_warnings
-
-    def test_default_registry_runs_all_checks(self) -> None:
-        from linkforge_core.validation import RobotValidator
-
-        result = RobotValidator().validate(_simple_robot())
-        assert result.is_valid  # No errors
-        assert result.has_warnings  # Geometry warnings expected
+    result = validate_robot(empty_robot)
+    if not result.is_valid:
+        for issue in result.issues:
+            print(f"Issue: {issue}")
+    assert result.has_warnings
+    assert any("visual" in w.message for w in result.warnings)

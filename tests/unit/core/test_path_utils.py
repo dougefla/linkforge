@@ -1,316 +1,275 @@
+"""Unit tests for path and resource resolution utilities."""
+
+from __future__ import annotations
+
 from pathlib import Path
 
-from linkforge_core.utils.path_utils import (
-    get_export_path,
-    normalize_uri_to_path,
-    resolve_package_path,
-)
+from linkforge.core._utils.path_utils import _extract_package_name, resolve_package_path
 
 
-def test_resolve_package_path_invalid_uri(tmp_path) -> None:
-    """Test invalid URIs return None."""
-    assert resolve_package_path("invalid://uri", tmp_path) is None
-    assert resolve_package_path("package://", tmp_path) is None
+def test_extract_package_name(tmp_path: Path) -> None:
+    """Test extracting package name from XML content."""
+    pkg_xml = tmp_path / "package.xml"
+
+    # Standard package.xml
+    pkg_xml.write_text("<package><name>test_pkg</name></package>", encoding="utf-8")
+    assert _extract_package_name(pkg_xml) == "test_pkg"
+
+    # With whitespace
+    pkg_xml.write_text("<package>\n  <name>  spaced_pkg  </name>\n</package>", encoding="utf-8")
+    assert _extract_package_name(pkg_xml) == "spaced_pkg"
+
+    # Invalid file
+    assert _extract_package_name(tmp_path / "nonexistent.xml") is None
 
 
-def test_resolve_package_path_standalone_structure(tmp_path) -> None:
-    """Test resolving in a standalone folder structure (no ROS env)."""
+def test_resolve_package_path_case_a(tmp_path: Path) -> None:
+    """Test Case A: Folder name matches package name."""
+    pkg_dir = tmp_path / "franka_description"
+    pkg_dir.mkdir()
+    mesh_file = pkg_dir / "meshes" / "link0.stl"
+    mesh_file.parent.mkdir()
+    mesh_file.write_text("data")
+
+    # Search from a deeper subfolder
+    result = resolve_package_path(
+        "package://franka_description/meshes/link0.stl", start_dir=pkg_dir / "urdf"
+    )
+    assert result == mesh_file
+
+
+def test_resolve_package_path_case_b_success(tmp_path: Path) -> None:
+    """Test Case B: Folder renamed, but package.xml name matches."""
+    pkg_dir = tmp_path / "franka-main"
+    pkg_dir.mkdir()
+    (pkg_dir / "package.xml").write_text("<package><name>franka_description</name></package>")
+    mesh_file = pkg_dir / "meshes" / "link0.stl"
+    mesh_file.parent.mkdir()
+    mesh_file.write_text("data")
+
+    result = resolve_package_path(
+        "package://franka_description/meshes/link0.stl", start_dir=pkg_dir / "urdf"
+    )
+    assert result == mesh_file
+
+
+def test_resolve_package_path_case_b_failure(tmp_path: Path) -> None:
+    """Test Case B Failure: Stops false-positive matching of wrong packages."""
     # Structure:
-    # /tmp/pkg_root/package.xml
-    # /tmp/pkg_root/meshes/model.stl
-    # /tmp/pkg_root/urdf/robot.urdf  <-- start_dir
-
-    pkg_root = tmp_path / "my_robot_pkg"
-    pkg_root.mkdir()
-    (pkg_root / "package.xml").touch()
-
-    meshes = pkg_root / "meshes"
-    meshes.mkdir()
-    model = meshes / "model.stl"
-    model.touch()
-
-    urdf_dir = pkg_root / "urdf"
-    urdf_dir.mkdir()
-
-    # Case 1: Detect package via package.xml parent
-    resolved = resolve_package_path("package://my_robot_pkg/meshes/model.stl", urdf_dir)
-    assert resolved is not None
-    assert resolved.resolve() == model.resolve()
-
-
-def test_resolve_package_path_folder_name_match(tmp_path) -> None:
-    """Test resolving based on folder name matching package name."""
-    # Structure:
-    # /tmp/my_robot_pkg/meshes/model.stl
-    # /tmp/my_robot_pkg/urdf/robot.urdf
-
-    pkg_root = tmp_path / "my_robot_pkg"
-    pkg_root.mkdir()
-
-    meshes = pkg_root / "meshes"
-    meshes.mkdir()
-    model = meshes / "model.stl"
-    model.touch()
-
-    urdf_dir = pkg_root / "urdf"
-    urdf_dir.mkdir()
-
-    resolved = resolve_package_path("package://my_robot_pkg/meshes/model.stl", urdf_dir)
-    assert resolved is not None
-    assert resolved.resolve() == model.resolve()
-
-
-def test_resolve_ros_package_path(tmp_path, monkeypatch) -> None:
-    """Test resolving via ROS_PACKAGE_PATH environment variable."""
-    # Mock a ROS workspace
-    ws = tmp_path / "ros_ws"
+    # /workspace
+    #   ├── wrong_pkg (package.xml name="wrong")
+    #   └── urdf/ (where we search from)
+    ws = tmp_path / "workspace"
     ws.mkdir()
-    pkg = ws / "ros_pkg"
-    pkg.mkdir()
-    (pkg / "mesh.stl").touch()
+    wrong_pkg = ws / "wrong_pkg"
+    wrong_pkg.mkdir()
+    (wrong_pkg / "package.xml").write_text("<package><name>wrong</name></package>")
 
-    # Mock environment
-    monkeypatch.setenv("ROS_PACKAGE_PATH", str(ws))
+    search_dir = ws / "urdf"
+    search_dir.mkdir()
 
-    # Test valid lookup
-    resolved = resolve_package_path("package://ros_pkg/mesh.stl", tmp_path)
-    assert resolved is not None
-    assert resolved.resolve() == (pkg / "mesh.stl").resolve()
-
-    # Test invalid path in ROS_PACKAGE_PATH
-    monkeypatch.setenv("ROS_PACKAGE_PATH", f"{ws}:/invalid/path")
-    resolved = resolve_package_path("package://ros_pkg/mesh.stl", tmp_path)
-    assert resolved is not None
-    assert resolved.resolve() == (pkg / "mesh.stl").resolve()
+    # Verify that we don't return a path if the package.xml name is different
+    # from the requested package name (even if the folder exists).
+    result = resolve_package_path("package://right_pkg/mesh.stl", start_dir=search_dir)
+    assert result is None
 
 
-def test_resolve_uri_formats(tmp_path) -> None:
-    """Test variations of package URI prefixes."""
-    pkg = tmp_path / "pkg"
-    pkg.mkdir()
-    (pkg / "file.txt").touch()
+def test_resolve_package_path_uri_variations(tmp_path: Path) -> None:
+    # Test different uri scheme variations (package:/ and package:)
+    pkg_dir = tmp_path / "franka_description"
+    pkg_dir.mkdir()
+    mesh_file = pkg_dir / "meshes" / "link0.stl"
+    mesh_file.parent.mkdir()
+    mesh_file.write_text("data")
 
-    # Simple folder match
+    # package:/
+    result = resolve_package_path("package:/franka_description/meshes/link0.stl", start_dir=pkg_dir)
+    assert result == mesh_file
+
+    # package:
+    result = resolve_package_path("package:franka_description/meshes/link0.stl", start_dir=pkg_dir)
+    assert result == mesh_file
+
+    # Invalid scheme
     assert (
-        resolve_package_path("package://pkg/file.txt", pkg).resolve()
-        == (pkg / "file.txt").resolve()
-    )
-    assert (
-        resolve_package_path("package:/pkg/file.txt", pkg).resolve() == (pkg / "file.txt").resolve()
-    )
-    assert (
-        resolve_package_path("package:pkg/file.txt", pkg).resolve() == (pkg / "file.txt").resolve()
+        resolve_package_path("invalid://franka_description/meshes/link0.stl", start_dir=pkg_dir)
+        is None
     )
 
-
-def test_resolve_max_depth_exceeded(tmp_path) -> None:
-    """Test that we don't go up forever."""
-    # Deeply nested folder without matching package
-    deep = tmp_path / "a/b/c/d/e/f/g/h/i/j/k"
-    deep.mkdir(parents=True)
-
-    resolved = resolve_package_path("package://unknown_pkg/mesh.stl", deep)
-    assert resolved is None
+    # Empty path remainder
+    assert resolve_package_path("package://", start_dir=pkg_dir) is None
 
 
-def test_resolve_package_path_edge_cases_extended(tmp_path, monkeypatch) -> None:
-    """Test extended edge cases for comprehensive coverage."""
+def test_resolve_package_path_additional_paths(tmp_path: Path) -> None:
+    pkg_dir = tmp_path / "franka_description"
+    pkg_dir.mkdir()
+    mesh_file = pkg_dir / "meshes" / "link0.stl"
+    mesh_file.parent.mkdir()
+    mesh_file.write_text("data")
 
-    # 1. Start dir is a file
-    # /tmp/pkg/robot.urdf
-    pkg = tmp_path / "pkg"
-    pkg.mkdir()
-    urdf = pkg / "robot.urdf"
-    urdf.touch()
-    (pkg / "mesh.stl").touch()
+    # Match in additional search paths
+    result = resolve_package_path(
+        "package://franka_description/meshes/link0.stl",
+        start_dir=tmp_path,
+        additional_search_paths=[tmp_path],
+    )
+    assert result == mesh_file
 
-    # Should resolve relative to file's parent
-    res = resolve_package_path("package://pkg/mesh.stl", urdf)
-    assert res is not None
-    assert res.resolve() == (pkg / "mesh.stl").resolve()
-
-    # 2. Package.xml fallback (folder name mismatch)
-    # /tmp/renamed_pkg/package.xml
-    # package name sought: "original_pkg"
-    # This relies on the heuristic: if we find ANY package.xml, assume it's the root.
-    renamed = tmp_path / "renamed_pkg"
-    renamed.mkdir()
-    (renamed / "package.xml").touch()
-    (renamed / "mesh.stl").touch()
-
-    # Searching for "original_pkg" inside "renamed_pkg"
-    # It should traverse up, see "renamed_pkg" (no match), see package.xml (match fallback)
-    res = resolve_package_path("package://original_pkg/mesh.stl", renamed / "urdf")
-    assert res is not None
-    assert res.resolve() == (renamed / "mesh.stl").resolve()
-
-    # 3. ROS_PACKAGE_PATH with empty entry and self-reference
-    # ROS_PACKAGE_PATH = "/path/to/ws::/path/to/pkg"
-    # The empty entry '::' should be skipped
-    # The entry that IS the package root should be caught
-
-    target_pkg = tmp_path / "target_pkg"
-    target_pkg.mkdir()
-    (target_pkg / "mesh.stl").touch()
-
-    # Set ROS_PACKAGE_PATH with empty segment and direct path to package
-    monkeypatch.setenv("ROS_PACKAGE_PATH", f":{str(target_pkg)}:")  # path:
-
-    res = resolve_package_path("package://target_pkg/mesh.stl", tmp_path)
-    assert res is not None
-    assert res.resolve() == (target_pkg / "mesh.stl").resolve()
+    # Match when additional search path IS the package itself
+    result = resolve_package_path(
+        "package://franka_description/meshes/link0.stl",
+        start_dir=tmp_path,
+        additional_search_paths=[pkg_dir],
+    )
+    assert result == mesh_file
 
 
-def test_resolve_package_path_root_recursion() -> None:
-    """Test recursion break at root (curr.parent == curr)."""
+def test_resolve_package_path_additional_paths_no_match(tmp_path: Path) -> None:
+    pkg_dir = tmp_path / "franka_description"
+    pkg_dir.mkdir()
+    mesh_file = pkg_dir / "meshes" / "link0.stl"
+    mesh_file.parent.mkdir()
+    mesh_file.write_text("data")
 
-    # Create a fake path object that acts like root
-    class FakePath:
-        def __init__(self, name="root"):
-            self.name = name
+    # We pass an additional search path that does NOT match (e.g. a different folder),
+    # but the package is found via standard start_dir parent traversal.
+    non_matching = tmp_path / "other_dir"
+    non_matching.mkdir()
 
-        def resolve(self):
-            return self
+    result = resolve_package_path(
+        "package://franka_description/meshes/link0.stl",
+        start_dir=pkg_dir,
+        additional_search_paths=[non_matching],
+    )
+    assert result == mesh_file
 
-        @property
-        def parent(self):
-            return self  # Root behavior: parent is self
 
-        def is_file(self):
-            return False
+def test_resolve_package_path_ros_env(tmp_path: Path, monkeypatch) -> None:
+    pkg_dir = tmp_path / "franka_description"
+    pkg_dir.mkdir()
+    mesh_file = pkg_dir / "meshes" / "link0.stl"
+    mesh_file.parent.mkdir()
+    mesh_file.write_text("data")
 
-        def __truediv__(self, other):
-            return FakePath(f"{self.name}/{other}")
+    # Set ROS_PACKAGE_PATH env
+    monkeypatch.setenv("ROS_PACKAGE_PATH", f" :{tmp_path}")
 
-        def exists(self):
-            return False
+    # Resolve from ROS path
+    result = resolve_package_path(
+        "package://franka_description/meshes/link0.stl",
+        start_dir=tmp_path,
+    )
+    assert result == mesh_file
 
-    fake_root = FakePath()
-    # Should loop, find nothing, hit root check, and break/return None
-    assert resolve_package_path("package://missing/file.stl", fake_root) is None
+    # Set ROS_PACKAGE_PATH to be the package itself
+    monkeypatch.setenv("ROS_PACKAGE_PATH", str(pkg_dir))
+    result = resolve_package_path(
+        "package://franka_description/meshes/link0.stl",
+        start_dir=tmp_path,
+    )
+    assert result == mesh_file
+
+
+def test_resolve_package_path_ros_env_no_match(tmp_path: Path, monkeypatch) -> None:
+    pkg_dir = tmp_path / "franka_description"
+    pkg_dir.mkdir()
+    mesh_file = pkg_dir / "meshes" / "link0.stl"
+    mesh_file.parent.mkdir()
+    mesh_file.write_text("data")
+
+    # ROS_PACKAGE_PATH has a non-matching directory, then standard lookup continues to start_dir
+    non_matching = tmp_path / "other_dir"
+    non_matching.mkdir()
+
+    monkeypatch.setenv("ROS_PACKAGE_PATH", str(non_matching))
+
+    result = resolve_package_path(
+        "package://franka_description/meshes/link0.stl",
+        start_dir=pkg_dir,
+    )
+    assert result == mesh_file
+
+
+def test_resolve_package_path_start_dir_is_file_and_root_break(tmp_path: Path) -> None:
+    pkg_dir = tmp_path / "franka_description"
+    pkg_dir.mkdir()
+    dummy_file = pkg_dir / "dummy.urdf"
+    dummy_file.write_text("")
+
+    # If start_dir is a file, it resolves to parent
+    result = resolve_package_path(
+        "package://franka_description/dummy.urdf",
+        start_dir=dummy_file,
+    )
+    assert result == dummy_file
+
+    # Root break test (searches all the way up to root)
+    result = resolve_package_path(
+        "package://nonexistent_package/dummy.urdf",
+        start_dir=Path("/"),
+    )
+    assert result is None
+
+
+def test_extract_package_name_exception(tmp_path: Path) -> None:
+    # Passing a directory instead of a file triggers exception in open()
+    assert _extract_package_name(tmp_path) is None
 
 
 def test_normalize_uri_to_path() -> None:
-    """Test normalization of file:// URIs."""
-    # Absolute mapping
-    assert normalize_uri_to_path("file:///path/to/mesh.stl") == Path("/path/to/mesh.stl")
+    from linkforge.core._utils.path_utils import normalize_uri_to_path
 
-    # Relative mapping
-    assert normalize_uri_to_path("file://mesh.stl") == Path("mesh.stl")
+    # Windows-style file:// URI
+    win_uri = "file:///C:/mesh.stl"
+    assert normalize_uri_to_path(win_uri) == Path("C:/mesh.stl")
 
-    # Windows style (strip leading slash before drive letter)
-    # Note: On actual Windows, Path("/C:/...") and Path("C:/...") behave differently
-    # but our utility ensures consistency.
-    assert normalize_uri_to_path("file:///C:/path/mesh.stl") == Path("C:/path/mesh.stl")
+    # Posix-style file:// URI
+    posix_uri = "file:///path/mesh.stl"
+    assert normalize_uri_to_path(posix_uri) == Path("/path/mesh.stl")
 
-    # Regular path
-    assert normalize_uri_to_path("/abs/path") == Path("/abs/path")
-
-
-def test_get_export_path(tmp_path) -> None:
-    """Test preparation of paths for URDF/XACRO export."""
-    # 1. Package URIs should be preserved untouched
-    assert get_export_path("package://pkg/mesh.stl") == "package://pkg/mesh.stl"
-
-    # 2. File URIs within export directory should become relative
-    # Case: file:///tmp/work/subdir/mesh.stl relative to /tmp/work
-    work_dir = tmp_path / "work"
-    work_dir.mkdir()
-    res = f"file://{work_dir.absolute()}/mesh.stl"
-
-    # Important: .absolute() might have different slash patterns on Windows
-    # get_export_path handles this.
-    export = get_export_path(res, relative_to=work_dir)
-    assert export == "mesh.stl"
-
-    # 3. Plain absolute paths within export directory should become relative
-    res_abs = f"{work_dir.absolute()}/subdir/mesh.stl"
-    export = get_export_path(res_abs, relative_to=work_dir)
-    assert export == "subdir/mesh.stl"
-
-    # 4. Paths outside relative_to should remain as is
-    other = tmp_path / "other"
-    other.mkdir()
-    res_other = f"{other.absolute()}/mesh.stl"
-    assert get_export_path(res_other, relative_to=work_dir) == res_other
+    # Plain path string
+    plain = "/path/mesh.stl"
+    assert normalize_uri_to_path(plain) == Path("/path/mesh.stl")
 
 
-def test_path_utils_search_and_export_edge_cases(tmp_path) -> None:
-    """Test additional search paths and export resolution edge cases."""
-    pkg_root = tmp_path / "my_pkg"
-    pkg_root.mkdir()
-    (pkg_root / "mesh.stl").write_text("data")
+def test_get_export_path(tmp_path: Path) -> None:
+    from linkforge.core._utils.path_utils import get_export_path
 
-    # Matching additional path
-    res = resolve_package_path(
-        "package://my_pkg/mesh.stl", tmp_path, additional_search_paths=[tmp_path]
+    # Preserve package://
+    assert (
+        get_export_path("package://franka_description/mesh.stl")
+        == "package://franka_description/mesh.stl"
     )
-    assert res == pkg_root / "mesh.stl"
-
-    # Match where folder name is package name
-    res = resolve_package_path(
-        "package://my_pkg/mesh.stl", tmp_path, additional_search_paths=[pkg_root]
+    assert (
+        get_export_path("package:/franka_description/mesh.stl")
+        == "package:/franka_description/mesh.stl"
     )
-    assert res == pkg_root / "mesh.stl"
 
-    res = get_export_path("/root/path.stl", relative_to=Path("/other/path"))
-    assert res == "/root/path.stl"
+    # file:// URI making relative
+    base_dir = tmp_path / "workspace"
+    base_dir.mkdir()
+    target_file = base_dir / "mesh.stl"
 
+    file_uri = f"file://{target_file.absolute()}"
+    assert get_export_path(file_uri, relative_to=base_dir) == "mesh.stl"
 
-def test_path_utils_ros_and_search_fallbacks(tmp_path) -> None:
-    """Test ROS_PACKAGE_PATH and search path priority logic."""
-    import os
+    # file:// URI NOT relative (outside)
+    outside_dir = tmp_path / "outside"
+    outside_dir.mkdir()
+    outside_file = outside_dir / "mesh.stl"
+    outside_uri = f"file://{outside_file.absolute()}"
+    assert get_export_path(outside_uri, relative_to=base_dir) == outside_uri
 
-    # 1. additional_search_paths with no match
-    pkg_name = "missing_pkg"
-    res = resolve_package_path(
-        f"package://{pkg_name}/x.urdf", tmp_path, additional_search_paths=[tmp_path]
+    # file:// URI without relative_to
+    assert get_export_path(file_uri) == file_uri
+
+    # Standard path making relative
+    assert get_export_path(str(target_file.absolute()), relative_to=base_dir) == "mesh.stl"
+
+    # Standard path NOT relative (outside)
+    assert get_export_path(str(outside_file.absolute()), relative_to=base_dir) == str(
+        outside_file.absolute()
     )
-    assert res is None
 
-    # 2. ROS_PACKAGE_PATH success and whitespace handling
-    pkg_dir = tmp_path / "ros_pkg"
-    pkg_dir.mkdir()
-    (pkg_dir / "robot.urdf").write_text("data")
-
-    # Empty entries and actual match
-    old_rpp = os.environ.get("ROS_PACKAGE_PATH")
-    os.environ["ROS_PACKAGE_PATH"] = f"  {os.pathsep}{tmp_path}{os.pathsep} "
-    try:
-        res = resolve_package_path("package://ros_pkg/robot.urdf", tmp_path)
-        assert res == pkg_dir / "robot.urdf"
-
-        # Case where path in RPP is the package itself
-        res = resolve_package_path("package://ros_pkg/robot.urdf", tmp_path)
-        # Re-set RPP to the folder name directly for line 65 coverage
-        os.environ["ROS_PACKAGE_PATH"] = str(pkg_dir)
-        res = resolve_package_path("package://ros_pkg/robot.urdf", tmp_path)
-        assert res == pkg_dir / "robot.urdf"
-
-    finally:
-        if old_rpp:
-            os.environ["ROS_PACKAGE_PATH"] = old_rpp
-        else:
-            del os.environ["ROS_PACKAGE_PATH"]
-
-
-def test_path_utils_export_errors() -> None:
-    """Test export path formatting when relativity fails."""
-    # file:// URI absolute but not under relative_to
-    res = "file:///root/mesh.stl"
-    rel = Path("/tmp")
-    assert get_export_path(res, relative_to=rel) == res
-
-
-def test_package_path_resolution_search_failure() -> None:
-    """Verify that resolve_package_path returns None when all search paths fail."""
-    from pathlib import Path
-
-    from linkforge_core.utils.path_utils import resolve_package_path
-
-    res = resolve_package_path(
-        "package://non_existent_pkg/model.stl",
-        Path("/tmp"),
-        additional_search_paths=[Path("/dev/null/fake")],
-    )
-    assert res is None
+    # Standard path without relative_to
+    assert get_export_path(str(target_file.absolute())) == str(target_file.absolute())

@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from linkforge_core.exceptions import RobotModelError
-from linkforge_core.models import Color, Material
+from linkforge.core import Color, Material, RobotModelError
 
 
 class TestColor:
@@ -69,6 +68,17 @@ class TestColor:
         assert color2.r == 1.0
         assert color2.a == 1.0
 
+    def test_predefined_colors(self) -> None:
+        """Test predefined color classmethods."""
+        white = Color.white()
+        assert white.to_tuple() == (1.0, 1.0, 1.0, 1.0)
+
+        black = Color.black()
+        assert black.to_tuple() == (0.0, 0.0, 0.0, 1.0)
+
+        grey = Color.grey()
+        assert grey.to_tuple() == (0.7, 0.7, 0.7, 1.0)
+
 
 class TestMaterial:
     """Tests for Material class."""
@@ -120,3 +130,10 @@ class TestMaterial:
         result = str(material)
         assert "textured" in result
         assert "texture.png" in result
+
+    def test_prefix(self) -> None:
+        """Test creating a material with a prefix."""
+        mat = Material(name="blue", color=Color(0, 0, 1))
+        prefixed = mat.with_prefix("arm_")
+        assert prefixed.name == "arm_blue"
+        assert prefixed.color == mat.color

@@ -3,11 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from linkforge_core.exceptions import RobotModelError
-from linkforge_core.models import (
-    GazeboElement,
-    GazeboPlugin,
-)
+from linkforge.core import GazeboElement, GazeboPlugin, RobotModelError
 
 
 class TestGazeboPlugin:
@@ -32,6 +28,12 @@ class TestGazeboPlugin:
         )
         assert plugin.parameters["param1"] == "value1"
         assert plugin.parameters["param2"] == "42"
+
+    def test_prefix(self) -> None:
+        """Test creating a plugin with a prefix."""
+        plugin = GazeboPlugin(name="p1", filename="f1")
+        pre = plugin.with_prefix("g_")
+        assert pre.name == "g_p1"
 
     def test_empty_name(self) -> None:
         """Test that empty name raises error."""
@@ -63,19 +65,9 @@ class TestGazeboElement:
         element = GazeboElement(
             reference="base_link",
             material="Gazebo/Red",
-            self_collide=True,
-            mu1=0.8,
-            mu2=0.8,
-            kp=1000.0,
-            kd=100.0,
         )
         assert element.reference == "base_link"
         assert element.material == "Gazebo/Red"
-        assert element.self_collide is True
-        assert element.mu1 == pytest.approx(0.8)
-        assert element.mu2 == pytest.approx(0.8)
-        assert element.kp == pytest.approx(1000.0)
-        assert element.kd == pytest.approx(100.0)
 
     def test_joint_element(self) -> None:
         """Test creating a joint-level Gazebo element."""
@@ -110,7 +102,15 @@ class TestGazeboElement:
         )
         assert element.properties["custom_prop"] == "custom_value"
 
+    def test_prefix(self) -> None:
+        """Test creating a gazebo element with a prefix."""
+        plugin = GazeboPlugin(name="p1", filename="f1")
+        ge = GazeboElement(reference="l1", plugins=[plugin])
+        pre = ge.with_prefix("g_")
+        assert pre.reference == "g_l1"
+        assert pre.plugins[0].name == "g_p1"
+
     def test_empty_reference_string(self) -> None:
         """Test that empty string reference raises error."""
-        with pytest.raises(RobotModelError, match="cannot be empty string"):
+        with pytest.raises(RobotModelError, match="cannot be empty"):
             GazeboElement(reference="")
