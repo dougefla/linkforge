@@ -2,17 +2,29 @@
 
 from __future__ import annotations
 
+import math
 import typing
 
 import bpy
 from bpy.types import Context
 from linkforge.core import Joint
+from mathutils import Quaternion, Vector
 
-from ..constants import PROP_JOINT
-from .property_helpers import find_property_owner, get_joint_props
+from .property_helpers import get_joint_props
 
 if typing.TYPE_CHECKING:
     from ..properties.joint_props import JointPropertyGroup
+
+
+# Joint-state writes must be cheap: the slider fires this on every mouse-move
+# tick. Touch a property only when its value actually changes — each assignment
+# dirties the depsgraph and (because the child link is in the depsgraph_update
+# handler) walks all robot-link sync logic.
+_ZERO3 = (0.0, 0.0, 0.0)
+_EPS = 1e-9
+_DOF_TYPES = frozenset({"revolute", "continuous", "prismatic"})
+_LIMITED_TYPES = frozenset({"revolute", "prismatic"})
+_ROTATIONAL_TYPES = frozenset({"revolute", "continuous"})
 
 
 def resolve_mimic_joints(joints: list[Joint], joint_objects: dict[str, bpy.types.Object]) -> None:
@@ -35,10 +47,8 @@ def resolve_mimic_joints(joints: list[Joint], joint_objects: dict[str, bpy.types
                 jp.mimic_offset = joint.mimic.offset
 
 
-def _resolve_axis_vector(props: JointPropertyGroup) -> typing.Any:
+def _resolve_axis_vector(props: JointPropertyGroup) -> Vector:
     """Return the joint axis as a unit Vector in the joint's local frame."""
-    from mathutils import Vector
-
     if props.axis == "X":
         return Vector((1.0, 0.0, 0.0))
     if props.axis == "Y":
@@ -53,12 +63,28 @@ def _resolve_axis_vector(props: JointPropertyGroup) -> typing.Any:
             float(props.custom_axis_z),
         )
     )
-    if axis.length > 1e-9:
+    if axis.length > _EPS:
         return axis.normalized()
     return Vector((0.0, 0.0, 1.0))
 
 
-def apply_joint_state(props: JointPropertyGroup, context: Context) -> None:
+def _set_location_if_changed(child: bpy.types.Object, new_loc: tuple[float, float, float]) -> None:
+    """Assign ``child.location`` only when it differs — avoids depsgraph churn."""
+    cur = child.location
+    if cur[0] != new_loc[0] or cur[1] != new_loc[1] or cur[2] != new_loc[2]:
+        child.location = new_loc
+
+
+def _set_rotation_if_changed(
+    child: bpy.types.Object, new_rot: tuple[float, float, float]
+) -> None:
+    """Assign ``child.rotation_euler`` only when it differs — avoids depsgraph churn."""
+    cur = child.rotation_euler
+    if cur[0] != new_rot[0] or cur[1] != new_rot[1] or cur[2] != new_rot[2]:
+        child.rotation_euler = new_rot
+
+
+def apply_joint_state(props: JointPropertyGroup, _context: Context) -> None:
     """Apply ``props.joint_state`` to the child link's local transform.
 
     Revolute/continuous joints rotate the child link about the joint axis.
@@ -70,13 +96,11 @@ def apply_joint_state(props: JointPropertyGroup, context: Context) -> None:
     Revolute and prismatic joint_state values are clamped to
     ``[limit_lower, limit_upper]``. Continuous joints accept any angle.
     """
-    from mathutils import Quaternion
-
     if not props.is_robot_joint:
         return
 
-    joint_obj = find_property_owner(context, props, PROP_JOINT)
-    if joint_obj is None:
+    joint_type = props.joint_type
+    if joint_type not in _DOF_TYPES:
         return
 
     child = props.child_link
@@ -87,38 +111,52 @@ def apply_joint_state(props: JointPropertyGroup, context: Context) -> None:
 
     # Clamp to hard limits for joint types that require them.
     # joint_type enum identifiers are lowercase (from linkforge.core.constants).
-    if props.joint_type in {"revolute", "prismatic"}:
+    if joint_type in _LIMITED_TYPES:
         lower = float(props.limit_lower)
         upper = float(props.limit_upper)
         if lower > upper:
             lower, upper = upper, lower
-        clamped = max(lower, min(upper, state))
-        if clamped != state:
+        if state < lower:
             # Write back through the ID-property dict to avoid re-entering
             # the update callback (which would otherwise loop).
-            props["joint_state"] = clamped
-            state = clamped
+            props["joint_state"] = lower
+            state = lower
+        elif state > upper:
+            props["joint_state"] = upper
+            state = upper
 
-    if props.joint_type in {"revolute", "continuous"}:
+    # rotation_mode is a sticky enum; only write when the child isn't already
+    # set to XYZ. A redundant assignment still dirties the depsgraph.
+    if child.rotation_mode != "XYZ":
         child.rotation_mode = "XYZ"
-        if props.axis == "X":
-            child.rotation_euler = (state, 0.0, 0.0)
-        elif props.axis == "Y":
-            child.rotation_euler = (0.0, state, 0.0)
-        elif props.axis == "Z":
-            child.rotation_euler = (0.0, 0.0, state)
-        else:  # CUSTOM — build the rotation from axis-angle via quaternion
-            import math
 
+    if joint_type in _ROTATIONAL_TYPES:
+        axis_name = props.axis
+        if axis_name == "X":
+            new_rot: tuple[float, float, float] = (state, 0.0, 0.0)
+        elif axis_name == "Y":
+            new_rot = (0.0, state, 0.0)
+        elif axis_name == "Z":
+            new_rot = (0.0, 0.0, state)
+        else:  # CUSTOM — build the rotation from axis-angle via quaternion
             axis = _resolve_axis_vector(props)
             half = state * 0.5
             s = math.sin(half)
             quat = Quaternion((math.cos(half), axis.x * s, axis.y * s, axis.z * s))
-            child.rotation_euler = quat.to_euler("XYZ")
-        child.location = (0.0, 0.0, 0.0)
-    elif props.joint_type == "prismatic":
-        axis = _resolve_axis_vector(props)
-        child.location = (axis.x * state, axis.y * state, axis.z * state)
-        child.rotation_mode = "XYZ"
-        child.rotation_euler = (0.0, 0.0, 0.0)
-    # fixed/floating/planar: no single-DOF state to apply
+            euler = quat.to_euler("XYZ")
+            new_rot = (euler.x, euler.y, euler.z)
+        _set_rotation_if_changed(child, new_rot)
+        _set_location_if_changed(child, _ZERO3)
+    else:  # prismatic
+        axis_name = props.axis
+        if axis_name == "X":
+            new_loc: tuple[float, float, float] = (state, 0.0, 0.0)
+        elif axis_name == "Y":
+            new_loc = (0.0, state, 0.0)
+        elif axis_name == "Z":
+            new_loc = (0.0, 0.0, state)
+        else:
+            axis = _resolve_axis_vector(props)
+            new_loc = (axis.x * state, axis.y * state, axis.z * state)
+        _set_location_if_changed(child, new_loc)
+        _set_rotation_if_changed(child, _ZERO3)
