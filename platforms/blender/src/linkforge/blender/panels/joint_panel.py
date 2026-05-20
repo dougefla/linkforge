@@ -83,8 +83,10 @@ class LINKFORGE_PT_joints(Panel):
         box.prop(props, "parent_link", icon="OUTLINER_OB_EMPTY")
         box.prop(props, "child_link", icon="OUTLINER_OB_EMPTY")
 
-        # Joint axis (only for revolute, continuous, prismatic)
-        if props.joint_type in {"REVOLUTE", "CONTINUOUS", "PRISMATIC"}:
+        # Joint axis (only for revolute, continuous, prismatic).
+        # Enum identifiers come from linkforge.core.constants (lowercase),
+        # so compare against lowercase strings.
+        if props.joint_type in {"revolute", "continuous", "prismatic"}:
             box.separator()
             box.label(text="Axis:", icon="ORIENTATION_GIMBAL")
             box.prop(props, "axis", expand=True)
@@ -96,8 +98,8 @@ class LINKFORGE_PT_joints(Panel):
                 col.prop(props, "custom_axis_z", text="Z")
 
         # Joint limits (dynamic based on joint type per robot model spec)
-        if props.joint_type in {"REVOLUTE", "PRISMATIC"}:
-            # REVOLUTE/PRISMATIC: Limits are REQUIRED (no checkbox)
+        if props.joint_type in {"revolute", "prismatic"}:
+            # revolute/prismatic: Limits are REQUIRED (no checkbox)
             box.separator()
             col = box.column(align=True)
             col.label(text="Limits (Required):", icon="DRIVER_DISTANCE")
@@ -105,8 +107,8 @@ class LINKFORGE_PT_joints(Panel):
             col.prop(props, "limit_upper")
             col.prop(props, "limit_effort")
             col.prop(props, "limit_velocity")
-        elif props.joint_type == "CONTINUOUS":
-            # CONTINUOUS: Limits are OPTIONAL (show checkbox, only effort/velocity)
+        elif props.joint_type == "continuous":
+            # continuous: Limits are OPTIONAL (show checkbox, only effort/velocity)
             box.separator()
             box.prop(props, "use_limits", text="Use Limits (Optional)")
             if props.use_limits:
@@ -114,16 +116,16 @@ class LINKFORGE_PT_joints(Panel):
                 col.label(text="Effort & Velocity Limits:", icon="DRIVER_DISTANCE")
                 col.prop(props, "limit_effort")
                 col.prop(props, "limit_velocity")
-        # FIXED/FLOATING/PLANAR: No limits section (not allowed per robot model spec)
+        # fixed/floating/planar: No limits section (not allowed per robot model spec)
 
         # Joint State (interactive pose slider within joint limits)
-        if props.joint_type in {"REVOLUTE", "CONTINUOUS", "PRISMATIC"}:
+        if props.joint_type in {"revolute", "continuous", "prismatic"}:
             box.separator()
             col = box.column(align=True)
-            unit = "rad" if props.joint_type in {"REVOLUTE", "CONTINUOUS"} else "m"
+            unit = "rad" if props.joint_type in {"revolute", "continuous"} else "m"
             col.label(text="Joint State:", icon="DRIVER_ROTATIONAL_DIFFERENCE")
             col.prop(props, "joint_state", text=f"Position ({unit})", slider=True)
-            if props.joint_type in {"REVOLUTE", "PRISMATIC"}:
+            if props.joint_type in {"revolute", "prismatic"}:
                 sub = col.row()
                 sub.active = False
                 sub.label(

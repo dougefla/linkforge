@@ -85,8 +85,9 @@ def apply_joint_state(props: JointPropertyGroup, context: Context) -> None:
 
     state = float(props.joint_state)
 
-    # Clamp to hard limits for joint types that require them
-    if props.joint_type in {"REVOLUTE", "PRISMATIC"}:
+    # Clamp to hard limits for joint types that require them.
+    # joint_type enum identifiers are lowercase (from linkforge.core.constants).
+    if props.joint_type in {"revolute", "prismatic"}:
         lower = float(props.limit_lower)
         upper = float(props.limit_upper)
         if lower > upper:
@@ -98,7 +99,7 @@ def apply_joint_state(props: JointPropertyGroup, context: Context) -> None:
             props["joint_state"] = clamped
             state = clamped
 
-    if props.joint_type in {"REVOLUTE", "CONTINUOUS"}:
+    if props.joint_type in {"revolute", "continuous"}:
         child.rotation_mode = "XYZ"
         if props.axis == "X":
             child.rotation_euler = (state, 0.0, 0.0)
@@ -115,9 +116,9 @@ def apply_joint_state(props: JointPropertyGroup, context: Context) -> None:
             quat = Quaternion((math.cos(half), axis.x * s, axis.y * s, axis.z * s))
             child.rotation_euler = quat.to_euler("XYZ")
         child.location = (0.0, 0.0, 0.0)
-    elif props.joint_type == "PRISMATIC":
+    elif props.joint_type == "prismatic":
         axis = _resolve_axis_vector(props)
         child.location = (axis.x * state, axis.y * state, axis.z * state)
         child.rotation_mode = "XYZ"
         child.rotation_euler = (0.0, 0.0, 0.0)
-    # FIXED/FLOATING/PLANAR: no single-DOF state to apply
+    # fixed/floating/planar: no single-DOF state to apply
